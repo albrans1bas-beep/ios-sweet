@@ -1,0 +1,125 @@
+name: rootfs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: rootfs
+
+jobs:
+  rootfs:
+    # mkiosroot.sh is a Linux flow (apfs-fuse + mkfs.hfsplus + loop mounts)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      # iPhone X (iPhone10,3) iOS 16.7.2 (20H392), the bring-up userland of
+      # the upstream notes; downloaded fresh from Apple, never committed.
+      IPSW_DEVICE: iPhone10,3
+      IPSW_BUILD: 20H392
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            hfsprogs qemu-system-arm libfuse3-dev cmake ninja-build g++ rsync clang llvm
+          git clone --recursive https://github.com/serge1peshcoff/apfs-fuse
+          cmake -S apfs-fuse -B apfs-build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build apfs-build -j"$(nproc)" --target apfs-fuse
+          sudo cp apfs-build/apfs-fuse /usr/local/bin/
+          apfs-fuse --help 2>&1 | head -2 || true
+
+      - name: Download IPSW
+        run: |
+          gh release download -R blacktop/ipsw -p '*linux_x86_64.tar.gz'
+          tar xf ipsw_*_linux_x86_64.tar.gz
+          BIN=$(find . -type f -name ipsw -perm -u+x | head -1)
+          "$BIN" download ipsw --device "$IPSW_DEVICE" --build "$IPSW_BUILD" \
+            --confirm --output ipsw
+          ls -la ipsw
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Extract the three OS dmgs
+        run: |
+          python3 - <<'EOF'
+          import glob, os, plistlib, zipfile
+          z = zipfile.ZipFile(glob.glob('ipsw/*.ipsw')[0])
+          bm = plistlib.loads(z.read('BuildManifest.plist'))
+          m = bm['BuildIdentities'][0]['Manifest']
+          for k in ('OS', 'SystemOS', 'AppOS'):
+              path = m[k]['Info']['Path']
+              z.extract(path, 'dmgs')
+              print(k, '->', path)
+              os.replace(os.path.join('dmgs', path), f'dmgs/{k}.dmg')
+          EOF
+          rm -f ipsw/*.ipsw
+          ls -la dmgs
+
+      - name: Build the HFS+ root
+        run: |
+          sudo ./tools/mkiosroot.sh dmgs/OS.dmg dmgs/SystemOS.dmg dmgs/AppOS.dmg \
+            rootfs.img 16G
+
+      - name: Apply SWEET root tweaks
+        run: |
+          sudo fsck.hfsplus -fy rootfs.img || true
+          sudo mkdir -p mnt
+          sudo mount -t hfsplus -o loop,force rootfs.img mnt
+          sudo python3 tools/sweet-root-tweaks.py "$(sudo readlink -f mnt)"
+          sudo umount mnt
+          rm -rf dmgs
+          df -h rootfs.img
+
+      - name: Fetch the latest kernel artifact
+        run: |
+          RUN_ID=$(gh run list -w xnu.yml -b main --limit 30 --json conclusion,databaseId \
+            --jq '[.[] | select(.conclusion == "success")][0].databaseId')
+          echo "using xnu run $RUN_ID"
+          gh run download "$RUN_ID" -n xnu-kernel -D kernel
+          ls kernel
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Build the boot payload
+        run: python3 tools/mkadt.py sweet-qemu.adt --qemu
+
+      - name: QEMU smoke test
+        run: |
+          python3 tools/mkpayload.py kernel/kernel.development.sweet sweet-qemu.adt \
+            payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress wdt=-1"
+          sudo env PATH="$PATH"           python3 tools/qemu-sweet.py payload.bin qemu-out \
+            --secs 300 --kernel kernel/kernel.development.sweet --disk "$PWD/rootfs.img" \
+            --fail-on-panic
+          grep -E 'hfs: mounted|init running|panic' qemu-out/fb.txt || true
+          grep -q 'hfs: mounted' qemu-out/fb.txt
+
+      - name: Compress and upload
+        if: always()
+        run: |
+          gzip -1 rootfs.img
+          ls -la rootfs.img.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-rootfs
+          path: rootfs.img.gz
+          retention-days: 7
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rootfs-logs
+          path: |
+            qemu-out/
+            payload.bin
+            sweet-qemu.adt
+          retention-days: 7
+          if-no-files-found: warn
