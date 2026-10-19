@@ -12,10 +12,10 @@ index 6630131..207f6b4 100644
  bsd/dev/sweet_touch.c			standard
 diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
 new file mode 100644
-index 0000000..7f7523a
+index 0000000..f7454a5
 --- /dev/null
 +++ b/bsd/dev/sweet_virtio.c
-@@ -0,0 +1,645 @@
+@@ -0,0 +1,648 @@
 +/*
 + * SWEET virtio (QEMU virt board): virtio-mmio transport + virtio-blk disk.
 + *
@@ -195,9 +195,9 @@ index 0000000..7f7523a
 +{
 +	struct vdesc *desc = (struct vdesc *)(sv.dma + OFF_DESC);
 +
-+	/* 3 descriptors per request, but only request 0..VRING_SIZE-3 cycle:
-+	 * link the chain fixture so each request reuses its own 3 slots. */
-+	for (uint16_t id = 0; id < VRING_SIZE; id += 3) {
++	/* 3 descriptors per request; only whole chains fit the ring (256 % 3 != 0),
++	 * so requests cycle bases 0, 3, ..., NCHAIN*3-3 and desc[N*3..] stay unused. */
++	for (uint16_t id = 0; id + 3 <= VRING_SIZE; id += 3) {
 +		desc[id + 0].flags = VRING_DESC_F_NEXT;
 +		desc[id + 0].next = (uint16_t)(id + 1);
 +		desc[id + 1].flags = VRING_DESC_F_NEXT;
@@ -283,7 +283,10 @@ index 0000000..7f7523a
 +static int
 +vio_request(bool write, uint64_t sector, uint32_t len)
 +{
-+	uint16_t base = (uint16_t)((sv.req_count * 3) % VRING_SIZE);
++	/* whole chains only: a 3-desc chain starting at 255 would need desc[256],
++	 * which is outside the ring — QEMU then fails the chain and breaks the
++	 * device (all later requests stall, used idx frozen). */
++	uint16_t base = (uint16_t)((sv.req_count % (VRING_SIZE / 3)) * 3);
 +	struct vdesc *desc = (struct vdesc *)(sv.dma + OFF_DESC);
 +	struct vbhdr *hdr = (struct vbhdr *)(sv.dma + OFF_HDR);
 +
