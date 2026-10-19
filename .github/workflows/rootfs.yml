@@ -59,13 +59,24 @@ jobs:
           z = zipfile.ZipFile('ipsw.ipsw')
           bm = plistlib.loads(z.read('BuildManifest.plist'))
           m = bm['BuildIdentities'][0]['Manifest']
-          for k in ('OS', 'SystemOS', 'AppOS'):
-              path = m[k]['Info']['Path']
+          dmg = {k: v['Info']['Path'] for k, v in m.items()
+                 if v.get('Info', {}).get('Path', '').endswith('.dmg')}
+          print('dmg keys:', {k: os.path.basename(v) for k, v in dmg.items()})
+          want = {}
+          for k, p in dmg.items():
+              lk = k.lower()
+              if lk == 'os' or 'operating' in lk:
+                  want['OS'] = p
+              elif 'system' in lk:
+                  want['SystemOS'] = p
+              elif 'app' in lk:
+                  want['AppOS'] = p
+          assert set(want) == {'OS', 'SystemOS', 'AppOS'}, want
+          for k, path in want.items():
               z.extract(path, 'dmgs')
               print(k, '->', path)
               os.replace(os.path.join('dmgs', path), f'dmgs/{k}.dmg')
           EOF
-          rm -f ipsw/*.ipsw
           ls -la dmgs
 
       - name: Build the HFS+ root
