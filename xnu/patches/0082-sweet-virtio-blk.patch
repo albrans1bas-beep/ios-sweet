@@ -12,10 +12,10 @@ index 6630131..207f6b4 100644
  bsd/dev/sweet_touch.c			standard
 diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
 new file mode 100644
-index 0000000..f061cb6
+index 0000000..7f7523a
 --- /dev/null
 +++ b/bsd/dev/sweet_virtio.c
-@@ -0,0 +1,627 @@
+@@ -0,0 +1,645 @@
 +/*
 + * SWEET virtio (QEMU virt board): virtio-mmio transport + virtio-blk disk.
 + *
@@ -123,7 +123,7 @@ index 0000000..f061cb6
 +} __attribute__((packed));
 +
 +#define BOUNCE_SIZE         (1u << 20)
-+#define REQUEST_TIMEOUT_NS  (10ull * NSEC_PER_SEC)
++#define REQUEST_TIMEOUT_NS  (30ull * NSEC_PER_SEC)
 +#define VRING_SIZE          256         /* <= QueueNumMax of QEMU bl */
 +
 +/* Layout of the contiguous DMA allocation. 0x0000 is the descriptor page
@@ -328,17 +328,35 @@ index 0000000..f061cb6
 +	__builtin_arm_dsb(0xf);
 +	vio_wr(REG_QUEUE_NOTIFY, 0);
 +
-+	/* wait for the device to consume one used ring element */
-+	uint64_t deadline;
-+	nanoseconds_to_absolutetime(REQUEST_TIMEOUT_NS, &deadline);
-+	deadline += mach_absolute_time();
-+	while ((uint16_t)(sv.seen_used - USED_IDX(sv.dma)) == 0) {
-+		if (mach_absolute_time() > deadline) {
-+			printf("SWEET VIO: request timeout (sector %llu type %u len %u)/n",
-+			    sector, hdr->type, len);
++	/* wait for the device to consume one used ring element; on timeout
++	 * re-notify (a lost kick leaves QEMU's completion stranded) and dump
++	 * ring state before giving up. */
++#define REQUEST_RETRIES        3
++	for (uint8_t attempt = 0; attempt <= REQUEST_RETRIES; attempt++) {
++		uint64_t deadline;
++		nanoseconds_to_absolutetime(REQUEST_TIMEOUT_NS, &deadline);
++		deadline += mach_absolute_time();
++		while ((uint16_t)(sv.seen_used - USED_IDX(sv.dma)) == 0) {
++			if (mach_absolute_time() > deadline) {
++				break;
++			}
++			delay(1);
++		}
++		if ((uint16_t)(sv.seen_used - USED_IDX(sv.dma)) != 0) {
++			break;
++		}
++		if (attempt == REQUEST_RETRIES) {
++			printf("SWEET VIO: request timeout after %u attempts "
++			    "(sector %llu type %u len %u: avail %u used %u "
++			    "desc %llu/%u/%u/%u hdr %llx)/n",
++			    REQUEST_RETRIES + 1, sector, hdr->type, len,
++			    (unsigned)AVAIL_IDX(sv.dma), (unsigned)USED_IDX(sv.dma),
++			    desc[base].addr, desc[base].len, desc[base].flags,
++			    desc[base].next, hdr->sector);
 +			return ETIMEDOUT;
 +		}
-+		delay(1);
++		printf("SWEET VIO: timeout, re-notifying (attempt %u)/n", attempt + 1);
++		vio_wr(REG_QUEUE_NOTIFY, 0);
 +	}
 +	vio_sync_all(false);
 +	__builtin_arm_dsb(0xf);
