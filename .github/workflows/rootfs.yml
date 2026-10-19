@@ -27,9 +27,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Free root disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost /usr/lib/jvm /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/go /opt/pipx
+          sudo docker image prune -af 2>/dev/null || true
+          df -h /
       - name: Deps
         run: |
-          sudo mkdir -p "$BIG" && sudo chown -R runner "$BIG" && df -h / /mnt
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             hfsprogs qemu-system-arm libfuse3-dev bzip2 libbz2-dev zlib1g-dev \
@@ -53,6 +60,17 @@ jobs:
           grep -q hfsplus /proc/filesystems && echo "hfsplus ready"
           apfs-fuse --help 2>&1 | head -2 || true
 
+      - name: Choose the big volume
+        run: |
+          sudo mkdir -p /mnt/heavy && sudo chown -R runner /mnt/heavy 2>/dev/null || true
+          # /mnt size varies across runner images: only trust it with room.
+          A=$(df -BG /mnt 2>/dev/null | awk 'NR==2{print $4}' | tr -d G)
+          if [ "${A:-0}" -ge 20 ]; then BIG=/mnt/heavy; else BIG=/home/runner/heavy; fi
+          mkdir -p "$BIG"
+          echo "BIG=$BIG" >> "$GITHUB_ENV"
+          echo "using $BIG"
+          df -h / /mnt
+
       - name: Download IPSW
         run: |
           cd "$BIG"
@@ -62,8 +80,9 @@ jobs:
           mv "$BIN" ipswbin
           ./ipswbin download ipsw --device "$IPSW_DEVICE" --build "$IPSW_BUILD" \
             --confirm --output ipsw-dl
-          mv ipsw-dl/*.ipsw ipsw.ipsw ; rm -rf ipsw-dl ipswbin ipsw_*_linux_x86_64.tar.gz
-          ls -la
+          mv ipsw-dl/*.ipsw ipsw.ipsw
+          rm -rf ipsw-dl ipswbin ipsw_*_linux_x86_64.tar.gz manpages LICENSE README.md
+          df -h "$PWD"
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -99,7 +118,7 @@ jobs:
       - name: Build the HFS+ root
         run: |
           sudo ./tools/mkiosroot.sh "$BIG"/dmgs/OS.dmg "$BIG"/dmgs/SystemOS.dmg \
-            "$BIG"/dmgs/AppOS.dmg "$BIG"/rootfs.img 16G
+            "$BIG"/dmgs/AppOS.dmg "$BIG"/rootfs.img 15G
 
       - name: Apply SWEET root tweaks
         run: |
