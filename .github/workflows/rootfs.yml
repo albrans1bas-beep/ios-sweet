@@ -150,8 +150,8 @@ jobs:
           sudo env PATH="$PATH" python3 tools/qemu-sweet.py "$BIG"/payload.bin qemu-out \
             --secs 300 --kernel kernel/kernel.development.sweet --disk "$BIG"/rootfs.img \
             --fail-on-panic
-          grep -E 'hfs: mounted|init running|panic' qemu-out/fb.txt || true
-          grep -q 'hfs: mounted' qemu-out/fb.txt
+          grep -E 'exec launchd|exec xpcproxy|panic' qemu-out/fb.txt || true
+          grep -q '"no_panic_observed"' qemu-out/result.json
 
       - name: Stage and compress artifacts
         if: always()

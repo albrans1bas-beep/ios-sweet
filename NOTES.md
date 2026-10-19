@@ -2,7 +2,62 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
-### >>> UPDATE 2026-10-19 (late night) - CI `rootfs` workflow: Apple launchd EXECUTES in QEMU <<<
+### >>> UPDATE 2026-10-19 (night 2) - QEMU iOS USERLAND BOOTS: daemons run, CI green gate fixed <<<
+
+**CI run 39338180589 (commit e6148c0): 300 s smoke with `no_panic_observed`,
+real iOS daemons executing.** Two bugs fixed on the way:
+
+1. **virtio chain-wrap deadlock (patch 0082, commit d5be4e8).** The timeout
+   dump `avail 86 used 85 ... desc .../1/256` showed the exact cause:
+   `base = (req_count*3) % 256` reached **255** on request 85, so the chain
+   needed `desc[256]` - outside the ring. QEMU fails that chain and moves
+   the device to needs-reset; every later request (even valid) times out
+   and `used` stays frozen. Fix: only whole 3-desc chains fit (256%3 != 0)
+   - `base = (req_count % (VRING_SIZE/3)) * 3`. The retry/re-notify +
+   ring-state dump added in e4ab446 stays (prints only on real failure).
+   The init fixture loop is bounded to full chains too (it used to write
+   desc[256] into the avail ring page).
+2. **launchd_cache_loader AMFI wall (commit e6148c0).** After ignition
+   fixed, `launchd_cache_loader` aborted with `Unable to find AMFI`
+   (namespace 7 subcode 1) - it IOServiceMatches AppleMobileFileIntegrity
+   and trusts the launchd.plist cdhash through it. Our kernel has no AMFI
+   IOService (open-source xnu only). The boot-arg **`launchd_unsecure_cache=1`**
+   (parsed with strtoul base 10 - must be a plain number, a path parses as
+   0 = off; documented in the phone bring-up section line ~264) skips it.
+
+**Verified boot state (fb.txt/fb.png, run 39338180589):** ignition stage 1
+dylib_cache discovery finds the shared cache ("dyld_cache" loaded), launchd
+runs its boot tasks (auearlyboot, tzinit, prng_seedctl,
+launchd_cache_loader OK with unsecure cache), then **execs real daemons:
+securityd, installcoordinationd, softwareupdated, fairplayd.H2,
+magicswitchd, ManagedSettingsAgent, coresymbolicationd; SWEET AKS answers
+securityd**; no panic for the full 300 s. The CI "failure" was the stale
+pass gate (`grep 'hfs: mounted'` - the persistent-console ring buffer only
+keeps the log tail); gate now: `grep '"no_panic_observed"' result.json`.
+
+Boot cmdline now: `rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1
+unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1
+-enable_kprintf_spam -noprogress wdt=-1`.
+
+**Next walls (visible in the log):**
+- `hfs_swap_BTNode: offset #0 invalid (0x0000) (blockSize 0x2000 numRecords 0)`
+  on catalog nodes 19715-19726 (fileID=4), repeated, then
+  `hfs_mark_inconsistent` -> fsck forced next mount. Node content reads as
+  all-zero. Suspect: some 8 KB node reads return zeros (driver read path?
+  mkiosroot wrote sparse/zero B-tree nodes?). Driver reads >512 B now work
+  (dyld cache/16 KB reads fine), so check the image content first (hfsplus
+  fsck on the Linux side) before blaming 0082.
+- `installcoordinat` SIGABRT: `Failed to fetch system container URL:
+  IXErrorDomain Code=1` - likely /private/var/containers or
+  MobileContainerManager data missing in the single-volume image; "Too
+  many corpses being created" (launchd throttling) follows.
+- `SWEET AKS: securityd sel 10 ... -> 0xe00002c7` - stub AppleKeyStore
+  doesn't implement that selector yet (was fine for launchd; may matter for
+  install/SpringBoard).
+
+After those: SpringBoard pixels (PHASES.md), then the window/touch bridge.
+
+### UPDATE 2026-10-19 (late night) - CI `rootfs` workflow: Apple launchd EXECUTES in QEMU <<<
 
 **Patch 0082 + the new `rootfs` workflow (CI run 39326701759) boots the
 REAL iOS 16.7.2 userland under QEMU up to Apple launchd running as PID 1.**
