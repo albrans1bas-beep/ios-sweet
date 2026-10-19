@@ -2,7 +2,32 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
-### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<
+### >>> UPDATE 2026-10-19 (read first) - Windows pivot fork <<<
+
+**New goal: iOS dev environment on Windows** (QEMU-run XNU+userland, Windows build
+toolchain, `simctl`-like bridge). Full phase plan in `PHASES.md` (fork root).
+Non-goals permanent: SEP/Face ID, Apple-server activation, Apple App Store
+purchases. Substitute later: local "Sweet App Store" catalog.
+
+- Fork: `super-xl/ios-sweet` (Actions enabled via `PUT /actions/permissions`
+  after workflow_dispatch 404'd on the fresh fork; workflows list was empty
+  until that enable). Local clone `C:\mm\ios-sweet`: upstream=dipa-studio,
+  origin=fork.
+- **Baseline kernel build dispatched: run 39274838234** (workflow_dispatch on
+  main; purpose: verify fork CI + first artifact + build log for
+  `tools/xnu-cc.py` single-file checks).
+- Local Windows loop ready: gh 2.102.0, Python 3.11.3, QEMU 11.1 at
+  `C:\Program Files\QEMU` (qemu-system-aarch64.exe). qemu-sweet.py uses AF_UNIX
+  QMP sockets -> may need a TCP fallback on Windows (test with the first
+  artifact).
+- Phase 1 patch sketch (start at 0082): virtio-mmio transport -> virtio-blk
+  root (`rd=vroot0`, mirror 0028's `sweet_ufs_rootdev` structure) -> ramfb as
+  the AppleCLCD panel buffer (fw_cfg DMA to configure) -> virtio-input into
+  `sweet_hid_key()`/`sweet_hid_touch()` -> virtio-net as `ue0`.
+  `tools/mkadt.py --qemu` emits the QEMU twin already; add /arm-io/virtioN nodes
+  there (QEMU virt board: virtio-mmio at 0x0a000000, 32 devices, IRQ 32-63).
+
+### UPDATE 2026-10-18 (phone state summary)
 
 **STATE at end of 2026-10-18 (evening):**
 - On the phone: userdata = **image v15** (`/run/media/dipa/android/ios-sweet-ipsw/ios16-root-20H392-v15.img/.simg`; = v14 + `/private/var/preferences/SystemConfiguration/preferences.plist` with one network service "USB Ethernet": Interface DeviceName ue0 Type Ethernet, IPv4 Manual 192.168.7.2/24 router 192.168.7.1, DNS 1.1.1.1 8.8.8.8, set "Automatic" as CurrentSet). Fallback image v14 (v12/v13 deleted).
