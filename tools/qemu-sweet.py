@@ -20,7 +20,7 @@ snapshot of the circular screen, not a complete boot log. --fail-on-panic
 returns 2 when a panic is visible; absence of a panic does not prove boot.
 An undecodable or blank screen returns 3 with --fail-on-panic.
 """
-import argparse, json, os, socket, struct, subprocess, sys, time, zlib
+import argparse, json, os, shutil, socket, struct, subprocess, sys, time, zlib
 
 FB_BASE, FB_W, FB_H = 0x9c000000, 1080, 2400
 FB_STRIDE = FB_W * 4
@@ -201,7 +201,7 @@ def main():
     mem_size = struct.unpack_from('<Q', payload, 0x40)[0]
     ram_gib = max(4, -(-(phys_base + mem_size - 0x40000000) // (1 << 30)))
     cmd = ['qemu-system-aarch64', '-M', 'virt,gic-version=3', '-cpu', a.cpu, '-smp', '1', '-m', f'{ram_gib}G',
-           '-nographic', '-serial', f'file:{q_out}/serial.txt', '-qmp', mon_arg,
+           '-nographic', '-nodefaults', '-serial', f'file:{q_out}/serial.txt', '-qmp', mon_arg,
            '-d', 'int,guest_errors,unimp', '-D', f'{out}/qemu.log', '-no-reboot',
            '-device', f'loader,file={out}/ram.bin,addr={phys_base:#x},force-raw=on',
            '-device', f'loader,file={out}/stub.bin,addr={STUB_PA:#x},force-raw=on',
@@ -212,6 +212,7 @@ def main():
                 '-global', 'virtio-mmio.force-legacy=false']
     if a.gdb:
         cmd += ['-S', '-gdb', 'tcp::1234']
+    print('RUN:', shutil.which('qemu-system-aarch64'), 'path_ok:', 'QEMU' in os.environ['PATH'], file=sys.stderr)
     p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL)
     if a.gdb:
         print('gdb stub on :1234; QMP socket:', mon, file=sys.stderr)
