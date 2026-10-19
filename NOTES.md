@@ -2,7 +2,54 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
-### >>> UPDATE 2026-10-19 (read first) - Windows pivot fork <<<
+### >>> UPDATE 2026-10-19 (evening) - Phase 1 kernel driver DONE: virtio-blk root on QEMU <<<
+
+**Patch 0082 = working virtio-blk root disk on QEMU, completely wired into
+the pipeline.** CI run 39308734548 (success). Boot with `rd=vroot0`:
+the driver reads the `/sweet-virtio` ADT node (whole virtio-mmio window at
+0x0a000000/0x20000 - mkadt --qemu emits it), scans all 32 transports for
+magic/version2/deviceId=2 and finds QEMU's `virtio-blk-device` at
+**transport 31 (0x0a003e00; QEMU places cmdline devices on the LAST free
+bus - never assume slot 0)**, negotiates VIRTIO_F_VERSION_1, runs a split
+vring in one 0x404000 contiguous DMA allocation (kmem_alloc_contig,
+KMA_ZERO|KMA_PERMANENT, pmap_find_phys/ptoa for the bus addresses), and
+issues one-at-a-time 3-descriptor blk requests (16 B header, 512 B/granule
+bounce data, 1 B status - all three descriptors fully written per request:
+the status desc used to inherit len 0 from the zeroed page, which QEMU
+rejects with "zero sized buffers are not allowed" and then disables the
+device - that was the one real bug). Polls the used ring with a timeout,
+bounce-copies, CleanPoC_/FlushPoC_DcacheRegion around DMA (VA-based; no
+invalidate_dcache64 on arm64). Boot log shows `BSD root: vroot0, major 1,
+minor 0` and hfs_mountfs reading real sectors off the disk (test disk was
+empty -> "unknown Volume Signature: 0" and the mount loop keeps retrying;
+no panic). **Block reads + the complete root-device plumbing are proven.**
+
+Next action: a real HFS+ root image. Build `mkiosroot.sh` output on CI
+(the workflow already runs on macOS; mkiosroot needs the 16.7 IPSW which
+stays out of git) or WSL2 hfsprogs (below), then boot the QEMU disk and
+get to the mount prompt. After that, the pivot to iOS 18.2 userland
+continues (see the 2026-10-19 afternoon note).
+
+**Hard-won CI/process facts (do not relearn):**
+- blacktop build.sh applies patches with `cd ${WORK_DIR}/xnu` + `git apply`
+  from INSIDE the xnu tree: patch paths must be `a/bsd/...` without the
+  `xnu/` prefix (every existing patch follows this).
+- The per-file diff for large added files triggers whitespace warnings on
+  `git apply`; harmless.
+- IOFindBSDRoot SWEET branches panic on driver error (0028 convention);
+  see fb.txt on failures.
+- QEMU `-nodefaults` required for the disk run (default NIC would take
+  transport 0; irrelevant now that the driver scans, but keep it).
+
+**Windows pending reboot:** WSL2 install (`wsl --install -d Ubuntu
+--no-launch --web-download`) started; VirtualMachinePlatform enable needs a
+machine reboot to finish (`wsl -l -v` prints usage until then). After the
+reboot: apfs-fuse + hfsprogs for the iOS 18.2 image assembly - the decrypted
+APFS OS volume sits at `research/ipsw-d64/aea/092-08971-209.dmg` (4.19 GB),
+the cryptex `092-10052-200.dmg.aea` is still encrypted (get the key with
+`ipsw fw aea -k <AEA>`, decrypt with `--key-val`).
+
+### UPDATE 2026-10-19 (read first) - Windows pivot fork <<<
 
 **New goal: iOS dev environment on Windows** (QEMU-run XNU+userland, Windows build
 toolchain, `simctl`-like bridge). Full phase plan in `PHASES.md` (fork root).
