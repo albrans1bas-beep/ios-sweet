@@ -20,12 +20,17 @@ purchases. Substitute later: local "Sweet App Store" catalog.
   `C:\Program Files\QEMU` (qemu-system-aarch64.exe). qemu-sweet.py uses AF_UNIX
   QMP sockets -> may need a TCP fallback on Windows (test with the first
   artifact).
-- Phase 1 patch sketch (start at 0082): virtio-mmio transport -> virtio-blk
-  root (`rd=vroot0`, mirror 0028's `sweet_ufs_rootdev` structure) -> ramfb as
-  the AppleCLCD panel buffer (fw_cfg DMA to configure) -> virtio-input into
-  `sweet_hid_key()`/`sweet_hid_touch()` -> virtio-net as `ue0`.
-  `tools/mkadt.py --qemu` emits the QEMU twin already; add /arm-io/virtioN nodes
-  there (QEMU virt board: virtio-mmio at 0x0a000000, 32 devices, IRQ 32-63).
+- **FULL LOCAL WINDOWS QEMU LOOP WORKS (2026-10-19):** fork CI baseline
+  `kernel.development.sweet` (run 39274838234, 7m43s, artifact `xnu-kernel`)
+  downloaded to `xnu/out-0081/`; `mkadt --qemu` + `mkpayload` +
+  `qemu-sweet.py` (Windows QMP-TCP adaptation) boot it panic-free:
+  `qemu-0081/result.json` = `no_panic_observed`, `fb.txt` shows the full
+  boot through `SWEET FB: AppleCLCD ... presented as 1125x2436` + zone_init +
+  ATM. Note: `kernel.development.sweet.link` is a directory (dSYM skeleton
+  without DWARF); `--kernel` must point at `kernel.development.sweet`
+  (its symbol table has `_iso_font`). QEMU 11.1 + LLVM 22 installed on
+  Windows; use `$env:Path` prepend. Next action: Phase 1 patch 0082
+  (virtio-mmio transport) — see `PHASES.md`.
 
 ### UPDATE 2026-10-18 (phone state summary)
 

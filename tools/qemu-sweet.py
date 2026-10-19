@@ -117,9 +117,16 @@ def screen_result(screen, unknown):
 
 
 def qmp(sock_path, *cmds, pmemsave=None):
-    """Run QEMU human-monitor commands over QMP (synchronous, unlike the echoing HMP socket)."""
-    s = socket.socket(socket.AF_UNIX)
-    s.connect(sock_path)
+    """Run QEMU human-monitor commands over QMP (synchronous, unlike the echoing HMP socket).
+
+    POSIX: unix:... socket at sock_path. Windows has no AF_UNIX bridging in all
+    QEMU builds, so main() picks a free TCP port and stores ';<port>' in
+    sock_path; we then connect to 127.0.0.1:<port>."""
+    if os.name == 'nt' and ';' in sock_path:
+        s = socket.create_connection(('127.0.0.1', int(sock_path.split(';')[1])))
+    else:
+        s = socket.socket(socket.AF_UNIX)
+        s.connect(sock_path)
     f = s.makefile('rw')
     f.readline()
 
@@ -169,6 +176,7 @@ def main():
         font = payload_data(payload, fonts[0], 256 * 16)
     os.makedirs(a.outdir, exist_ok=True)
     out = os.path.abspath(a.outdir)
+    q_out = out.replace('\\', '/')	# QEMU chardev paths: forward slashes on Windows
 
     phys_base, img, ba_pa, entry_pa = build_image(payload)
     open(f'{out}/ram.bin', 'wb').write(img)
@@ -176,13 +184,23 @@ def main():
     print(f'phys_base={phys_base:#x} boot_args={ba_pa:#x} entry={entry_pa:#x}', file=sys.stderr)
 
     mon = f'{out}/mon.sock'
+    if os.name == 'nt':
+        # No usable AF_UNIX on Windows QEMU builds: pick a free TCP port.
+        probe = socket.socket()
+        probe.bind(('127.0.0.1', 0))
+        mon_port = probe.getsockname()[1]
+        probe.close()
+        mon_arg = f'tcp:127.0.0.1:{mon_port},server,nowait'
+        mon = f'{mon};{mon_port}'
+    else:
+        mon_arg = f'unix:{mon},server,nowait'
     if os.path.exists(mon):
         os.unlink(mon)
     # virt RAM starts at 0x40000000: cover the payload's RAM (mkadt.py --highmem needs 8G).
     mem_size = struct.unpack_from('<Q', payload, 0x40)[0]
     ram_gib = max(4, -(-(phys_base + mem_size - 0x40000000) // (1 << 30)))
     cmd = ['qemu-system-aarch64', '-M', 'virt,gic-version=3', '-cpu', a.cpu, '-smp', '1', '-m', f'{ram_gib}G',
-           '-nographic', '-serial', f'file:{out}/serial.txt', '-qmp', f'unix:{mon},server,nowait',
+           '-nographic', '-serial', f'file:{q_out}/serial.txt', '-qmp', mon_arg,
            '-d', 'int,guest_errors,unimp', '-D', f'{out}/qemu.log', '-no-reboot',
            '-device', f'loader,file={out}/ram.bin,addr={phys_base:#x},force-raw=on',
            '-device', f'loader,file={out}/stub.bin,addr={STUB_PA:#x},force-raw=on',
