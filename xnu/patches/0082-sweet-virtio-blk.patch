@@ -12,10 +12,10 @@ index 6630131..207f6b4 100644
  bsd/dev/sweet_touch.c			standard
 diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
 new file mode 100644
-index 0000000..47f2b2a
+index 0000000..d7cad09
 --- /dev/null
 +++ b/bsd/dev/sweet_virtio.c
-@@ -0,0 +1,604 @@
+@@ -0,0 +1,614 @@
 +/*
 + * SWEET virtio (QEMU virt board): virtio-mmio transport + virtio-blk disk.
 + *
@@ -85,6 +85,8 @@ index 0000000..47f2b2a
 +#define VSIG_MAGIC          0x74726976u   /* "virt" */
 +#define VDEV_ID_BLK         2
 +#define VERSION_MMIO        2
++/* the strap of transports at the ADT base (32 slots of 0x200 bytes) */
++#define VPOS_STRIDE         0x200u
 +
 +#define VST_ACKNOWLEDGE     1u
 +#define VST_DRIVER          2u
@@ -213,19 +215,7 @@ index 0000000..47f2b2a
 +static int
 +vio_transport_setup(void)
 +{
-+	if (vio_rd(REG_MAGIC) != VSIG_MAGIC) {
-+		printf("SWEET VIO: no virtio-mmio signature/n");
-+		return ENXIO;
-+	}
-+	if (vio_rd(REG_VERSION) != VERSION_MMIO) {
-+		printf("SWEET VIO: mmio version %u (need %u; pass -global virtio-mmio.force-legacy=false)/n",
-+		    vio_rd(REG_VERSION), VERSION_MMIO);
-+		return ENXIO;
-+	}
-+	if (vio_rd(REG_DEVICE_ID) != VDEV_ID_BLK) {
-+		printf("SWEET VIO: deviceId %u is not virtio-blk/n", vio_rd(REG_DEVICE_ID));
-+		return ENXIO;
-+	}
++	/* magic/version/deviceId were verified by the transport scan in sweet_vio_init */
 +	printf("SWEET VIO: virtio-blk, vendor 0x%04x/n", vio_rd(REG_VENDOR_ID));
 +
 +	/* reset */
@@ -560,11 +550,31 @@ index 0000000..47f2b2a
 +	if (SecureDTLookupEntry(NULL, "/sweet-virtio", &node) != kSuccess ||
 +	    SecureDTGetProperty(node, "reg", (void const **)&reg, &size) != kSuccess ||
 +	    size < 2 * sizeof(uintptr_t)) {
-+		printf("SWEET VIO: no /sweet-virtio node in the device tree/n");
++		printf("SWEET VIO: no /sweet-virtio node in the device tree\n");
 +		return ENXIO;
 +	}
 +
-+	sv.regs = ml_io_map(reg[0], reg[1]);
++	/*
++	 * The ADT gives the whole virtio-mmio window; QEMU picks which of the
++	 * 32 transports hosts a -device (it uses the last free bus), so scan
++	 * for the virtio-blk signature rather than trusting a fixed slot.
++	 */
++	bool found = false;
++	for (uint32_t slot = 0; slot < reg[1] / VPOS_STRIDE; ++slot) {
++		sv.regs = ml_io_map(reg[0] + slot * VPOS_STRIDE, VPOS_STRIDE);
++		if (vio_rd(REG_MAGIC) == VSIG_MAGIC && vio_rd(REG_VERSION) == VERSION_MMIO &&
++		    vio_rd(REG_DEVICE_ID) == VDEV_ID_BLK) {
++			printf("SWEET VIO: virtio-blk at transport %u (%#x)\n", slot,
++			    (uint32_t)(reg[0] + slot * VPOS_STRIDE));
++			found = true;
++			break;
++		}
++	}
++	if (!found) {
++		sv.regs = NULL;
++		printf("SWEET VIO: no virtio-mmio transport with a blk device found\n");
++		return ENXIO;
++	}
 +	if (kmem_alloc_contig(kernel_map, &sv.dma, DMA_SIZE, PAGE_MASK, 0, 0,
 +	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
 +		printf("SWEET VIO: no contiguous DMA memory/n");

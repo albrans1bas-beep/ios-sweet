@@ -32,9 +32,10 @@ VTIMER_INTID = 19
 # QEMU virt (-M virt,gic-version=3 -cpu cortex-a76): GICD/GICR and the generic timer's CNTFRQ
 QEMU_GICD, QEMU_GICR, QEMU_TIMEBASE = 0x08000000, 0x080a0000, 62500000
 QEMU_VTIMER_INTID = 27
-# First of QEMU virt's 32 virtio-mmio transports (stride 0x200), disk via
-# -device virtio-blk-device (bsd/dev/sweet_virtio.c, rd=vroot0)
-QEMU_VIRTIO, QEMU_VIRTIO_SIZE = 0x0a000000, 0x200
+# The whole virtio-mmio window on QEMU virt (32 transports of 0x200, first at
+# 0x0a000000): bsd/dev/sweet_virtio.c scans for the transport hosting
+# -device virtio-blk-device (QEMU decides the slot; it uses the last free bus).
+QEMU_VIRTIO, QEMU_VIRTIO_SIZE = 0x0a000000, 0x20000
 
 BOOT_MANIFEST_HASH = hashlib.sha384(b'sweet boot manifest').digest()
 
