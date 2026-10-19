@@ -12,10 +12,10 @@ index 6630131..207f6b4 100644
  bsd/dev/sweet_touch.c			standard
 diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
 new file mode 100644
-index 0000000..d7cad09
+index 0000000..f061cb6
 --- /dev/null
 +++ b/bsd/dev/sweet_virtio.c
-@@ -0,0 +1,614 @@
+@@ -0,0 +1,627 @@
 +/*
 + * SWEET virtio (QEMU virt board): virtio-mmio transport + virtio-blk disk.
 + *
@@ -300,10 +300,22 @@ index 0000000..d7cad09
 +	hdr->type = write ? VB_REQ_WRITE : VB_REQ_READ;
 +	hdr->reserved = 0;
 +	hdr->sector = sector;
++	/* descriptor 0: virtio-blk header (device reads it) */
 +	desc[base].addr = sv.dma_pa + OFF_HDR;
 +	desc[base].len = sizeof(*hdr);
++	desc[base].flags = VRING_DESC_F_NEXT;
++	desc[base].next = (uint16_t)(base + 1);
++	/* descriptor 1: the data (device writes it on reads, reads it on writes) */
 +	desc[base + 1].addr = sv.dma_pa + OFF_BOUNCE;
 +	desc[base + 1].len = len;
++	desc[base + 1].flags = VRING_DESC_F_NEXT | VRING_DESC_F_WRITE;
++	desc[base + 1].next = (uint16_t)(base + 2);
++	/* descriptor 2: the one-byte bl status (device writes it) — also the
++	 * 'zero sized buffers are not allowed' guard: it must never be 0. */
++	desc[base + 2].addr = sv.dma_pa + OFF_RESP;
++	desc[base + 2].len = 1;
++	desc[base + 2].flags = VRING_DESC_F_WRITE;
++	desc[base + 2].next = 0;
 +
 +	vio_sync_all(true);
 +	__builtin_arm_dsb(0xf);
@@ -333,7 +345,8 @@ index 0000000..d7cad09
 +
 +	struct vring_used_elem e = USED_EL(sv.dma, sv.seen_used);
 +	sv.seen_used++;
-+	if (e.id != base || e.len != len) {
++	/* reads carry the data plus the trailing status byte (len+1) */
++	if (e.id != base || e.len > len + 1) {
 +		printf("SWEET VIO: bogus used element id %u len %u (want %u/%u)/n",
 +		    e.id, e.len, base, len);
 +		return EIO;
