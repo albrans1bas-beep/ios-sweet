@@ -2,7 +2,56 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
-### >>> UPDATE 2026-10-19 (evening) - Phase 1 kernel driver DONE: virtio-blk root on QEMU <<<
+### >>> UPDATE 2026-10-19 (late night) - CI `rootfs` workflow: Apple launchd EXECUTES in QEMU <<<
+
+**Patch 0082 + the new `rootfs` workflow (CI run 39326701759) boots the
+REAL iOS 16.7.2 userland under QEMU up to Apple launchd running as PID 1.**
+Workflow `.github/workflows/rootfs.yml` (workflow_dispatch): free the root
+disk (Android SDK/dotnet/GHC recipe), apt hfsprogs+qemu+llvm, build
+**sgan81/apfs-fuse pinned 66b86bd** (Alpine's pin), `modprobe hfsplus`
+(the azure kernel ships it in `linux-modules-extra-$(uname -r)`), download
+the iPhone10,3 / 20H392 IPSW with blacktop `ipsw`, pick the dmgs from
+BuildManifest by printing manifest keys first (in practice: `OS`,
+`Cryptex1,SystemOS`, `Cryptex1,AppOS` - never assume the key names),
+`mkiosroot.sh` 15G, `sweet-root-tweaks.py`, fetch the latest `xnu-kernel`
+artifact (gh run download), smoke-boot 300 s with `--disk`. Big files
+live on /mnt/heavy when /mnt has >= 20 GB (runner images vary; /home is
+tiny - the job crashed twice on it).
+
+**Boot result:** `SWEET VIO` -> `hfs: mounted iOSRoot on device b(1, 0)`
+-> launchd's own libignition ran (stage count 7, "hello from launchd.1"),
+"mounting preboot" -> `ignite() returned 25`, PID 1 exits, kernel panics
+(initproc died). Execution works: no exec-time CS kill after adding
+`unentitled_ios_sim_launch` to the boot cmdline (macOS-kernel
+`kern_exec.c:7394` blocks iOS binaries with EXEC_EXIT_REASON_WRONG_PLATFORM
+unless that boot-arg or the no-sandbox entitlement; patch 0035 does not
+cover it - keep the arg in every mkpayload cmdline from now on).
+
+Remaining two failures:
+1. **libignition preboot mount fails (errno 25)**: "failed to lookup
+   preboot: 25" -> "ignition boot failed: 25". The mkiosroot image has
+   /private/preboot/Cryptexes/{OS,App} INSIDE the single volume; libignition
+   wants a separate preboot volume. Either put the cryptex contents at
+   /System/Cryptexes directly as well, or make the QEMU disk partitioned
+   with preboot as its own HFS+ volume - investigate against libignition
+   in the SystemOS cryptex dyld cache.
+2. **Sporadic `SWEET VIO: request timeout`** under load (16 KB read,
+   sector 18672856) -> "dyld cache '(null)' not loaded" ->
+   vm_shared_region_start_address() failed. The driver poll timeout is
+   500 ms (recovered driver vio_request). QEMU handles 512 B reads fine;
+   the timeouts appear with 16 KB reads. Weak leads: used-elem wrap, or
+   QEMU still disabled the device once earlier in that boot. Next:
+   bump/freeze the poll handling; if reproducible, leave the guest QMP
+   open and dump the virtio state at the timeout.
+
+Artifacts (7-day retention): `ios-rootfs` 6.1 GB (run 39326701759) and
+`stage-logs` (fb.txt/png, qemu.log, payload.bin, sweet-qemu.adt). The CI
+runner pulls/provisions all image tooling itself: the WSL route is no
+longer needed for image work (Windows WSL install stayed broken: DISM
+enables fail with CBS 1465; both features remain Disabled, no pending
+state - safe to walk away and reuse CI instead).
+
+### UPDATE 2026-10-19 (evening) - Phase 1 kernel driver DONE: virtio-blk root on QEMU <<<
 
 **Patch 0082 = working virtio-blk root disk on QEMU, completely wired into
 the pipeline.** CI run 39308734548 (success). Boot with `rd=vroot0`:
