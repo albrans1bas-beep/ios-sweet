@@ -44,17 +44,19 @@ jobs:
           gh release download -R blacktop/ipsw -p '*linux_x86_64.tar.gz'
           tar xf ipsw_*_linux_x86_64.tar.gz
           BIN=$(find . -type f -name ipsw -perm -u+x | head -1)
-          "$BIN" download ipsw --device "$IPSW_DEVICE" --build "$IPSW_BUILD" \
-            --confirm --output ipsw
-          ls -la ipsw
+          mv "$BIN" ipswbin
+          ./ipswbin download ipsw --device "$IPSW_DEVICE" --build "$IPSW_BUILD" \
+            --confirm --output ipsw-dl
+          mv ipsw-dl/*.ipsw ipsw.ipsw ; rm -rf ipsw-dl
+          ls -la ipsw.ipsw
         env:
           GH_TOKEN: ${{ github.token }}
 
       - name: Extract the three OS dmgs
         run: |
           python3 - <<'EOF'
-          import glob, os, plistlib, zipfile
-          z = zipfile.ZipFile(glob.glob('ipsw/*.ipsw')[0])
+          import plistlib, zipfile
+          z = zipfile.ZipFile('ipsw.ipsw')
           bm = plistlib.loads(z.read('BuildManifest.plist'))
           m = bm['BuildIdentities'][0]['Manifest']
           for k in ('OS', 'SystemOS', 'AppOS'):
