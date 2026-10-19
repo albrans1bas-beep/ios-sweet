@@ -1,7 +1,7 @@
-diff --git a/xnu/bsd/conf/files b/xnu/bsd/conf/files
+diff --git a/bsd/conf/files b/bsd/conf/files
 index 6630131..207f6b4 100644
---- a/xnu/bsd/conf/files
-+++ b/xnu/bsd/conf/files
+--- a/bsd/conf/files
++++ b/bsd/conf/files
 @@ -105,6 +105,7 @@ bsd/dev/random/randomdev.c		standard
  
  bsd/dev/memdev.c			standard
@@ -10,11 +10,11 @@ index 6630131..207f6b4 100644
  bsd/dev/sweet_sample.c			standard
  bsd/dev/sweet_keys.c			standard
  bsd/dev/sweet_touch.c			standard
-diff --git a/xnu/bsd/dev/sweet_virtio.c b/xnu/bsd/dev/sweet_virtio.c
+diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
 new file mode 100644
 index 0000000..bab1a80
 --- /dev/null
-+++ b/xnu/bsd/dev/sweet_virtio.c
++++ b/bsd/dev/sweet_virtio.c
 @@ -0,0 +1,603 @@
 +/*
 + * SWEET virtio (QEMU virt board): virtio-mmio transport + virtio-blk disk.
@@ -619,10 +619,10 @@ index 0000000..bab1a80
 +	return 0;
 +}
 +#endif /* ARM64_BOARD_CONFIG_SWEET */
-diff --git a/xnu/iokit/bsddev/IOKitBSDInit.cpp b/xnu/iokit/bsddev/IOKitBSDInit.cpp
+diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
 index e6c74aa..e4f0313 100644
---- a/xnu/iokit/bsddev/IOKitBSDInit.cpp
-+++ b/xnu/iokit/bsddev/IOKitBSDInit.cpp
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
 @@ -782,6 +782,22 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
  		*oflags = 0;
  		goto iofrootx;
