@@ -146,33 +146,35 @@ jobs:
       - name: QEMU smoke test
         run: |
           python3 tools/mkpayload.py kernel/kernel.development.sweet "$BIG"/sweet-qemu.adt \
-            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress wdt=-1"
+            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch -enable_kprintf_spam -noprogress wdt=-1"
           sudo env PATH="$PATH" python3 tools/qemu-sweet.py "$BIG"/payload.bin qemu-out \
             --secs 300 --kernel kernel/kernel.development.sweet --disk "$BIG"/rootfs.img \
             --fail-on-panic
           grep -E 'hfs: mounted|init running|panic' qemu-out/fb.txt || true
           grep -q 'hfs: mounted' qemu-out/fb.txt
 
-      - name: Compress and upload
+      - name: Stage and compress artifacts
         if: always()
         run: |
+          mkdir -p stage-logs
+          cp qemu-out/fb.png qemu-out/fb.txt qemu-out/qemu.log qemu-out/regs.txt \
+            qemu-out/result.json stage-logs/ 2>/dev/null || true
+          cp "$BIG"/payload.bin "$BIG"/sweet-qemu.adt stage-logs/ 2>/dev/null || true
           gzip -1 "$BIG"/rootfs.img 2>/dev/null || true
-          ls -la "$BIG"/rootfs.img.gz
+          ls -la "$BIG"/rootfs.img.gz stage-logs
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: ios-rootfs
           path: /mnt/heavy/rootfs.img.gz
           retention-days: 7
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: rootfs-logs
-          path: |
-            qemu-out/
-            /mnt/heavy/payload.bin
-            /mnt/heavy/sweet-qemu.adt
+          path: stage-logs/
           retention-days: 7
           if-no-files-found: warn
