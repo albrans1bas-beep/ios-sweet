@@ -12,10 +12,10 @@ index 6630131..207f6b4 100644
  bsd/dev/sweet_touch.c			standard
 diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
 new file mode 100644
-index 0000000..bab1a80
+index 0000000..47f2b2a
 --- /dev/null
 +++ b/bsd/dev/sweet_virtio.c
-@@ -0,0 +1,603 @@
+@@ -0,0 +1,604 @@
 +/*
 + * SWEET virtio (QEMU virt board): virtio-mmio transport + virtio-blk disk.
 + *
@@ -176,14 +176,15 @@ index 0000000..bab1a80
 +	return (uint64_t)vio_rd(off) | ((uint64_t)vio_rd(off + 4) << 32);
 +}
 +
-+/* cache maintenance over the whole DMA region (no-ops under QEMU TCG) */
++/* cache maintenance over the whole DMA region; QEMU's TCG has no data cache,
++ * so these are no-ops there but keep the code honest for real boards (VA). */
 +static void
 +vio_sync_all(bool write)
 +{
 +	if (write) {
-+		flush_dcache64((addr64_t)sv.dma_pa, DMA_SIZE, TRUE);
++		CleanPoC_DcacheRegion(sv.dma, DMA_SIZE);
 +	} else {
-+		invalidate_dcache64((addr64_t)sv.dma_pa, DMA_SIZE, TRUE);
++		FlushPoC_DcacheRegion(sv.dma, DMA_SIZE);
 +	}
 +}
 +
@@ -363,7 +364,7 @@ index 0000000..bab1a80
 +	if (error) {
 +		return error;
 +	}
-+	invalidate_dcache64((addr64_t)(sv.dma_pa + OFF_BOUNCE), count_sectors * 512, TRUE);
++	FlushPoC_DcacheRegion(sv.dma + OFF_BOUNCE, count_sectors * 512);
 +	memcpy(out, (const void *)(sv.dma + OFF_BOUNCE), count_sectors * 512);
 +	return 0;
 +}
@@ -372,7 +373,7 @@ index 0000000..bab1a80
 +vio_write_blocks(uint64_t sector, const uint8_t *in, uint32_t count_sectors)
 +{
 +	memcpy((void *)(sv.dma + OFF_BOUNCE), in, count_sectors * 512);
-+	flush_dcache64((addr64_t)(sv.dma_pa + OFF_BOUNCE), count_sectors * 512, TRUE);
++	CleanPoC_DcacheRegion(sv.dma + OFF_BOUNCE, count_sectors * 512);
 +	return vio_request(true, sector, count_sectors * 512);
 +}
 +
