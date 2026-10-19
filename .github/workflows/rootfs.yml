@@ -27,8 +27,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            hfsprogs qemu-system-arm libfuse3-dev cmake ninja-build g++ rsync clang llvm
-          git clone --recursive https://github.com/serge1peshcoff/apfs-fuse
+            hfsprogs qemu-system-arm libfuse3-dev bzip2 libbz2-dev zlib1g-dev \
+            libattr1-dev cmake ninja-build g++ rsync clang llvm
+          # sgan81/apfs-fuse: Alpine pins 66b86bd (2023-03-12); use the same.
+          git clone -q https://github.com/sgan81/apfs-fuse
+          git -C apfs-fuse checkout -q 66b86bd525e8cb90f9012543be89b1f092b75cf3
+          git -C apfs-fuse submodule update --init --recursive
           cmake -S apfs-fuse -B apfs-build -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5
           cmake --build apfs-build -j"$(nproc)" --target apfs-fuse
