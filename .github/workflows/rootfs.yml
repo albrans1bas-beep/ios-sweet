@@ -55,7 +55,7 @@ jobs:
       - name: Extract the three OS dmgs
         run: |
           python3 - <<'EOF'
-          import plistlib, zipfile
+          import os, plistlib, zipfile
           z = zipfile.ZipFile('ipsw.ipsw')
           bm = plistlib.loads(z.read('BuildManifest.plist'))
           m = bm['BuildIdentities'][0]['Manifest']
