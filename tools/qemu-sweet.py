@@ -161,6 +161,7 @@ def main():
     ap.add_argument('--hmp', action='append', default=[], help='extra monitor command run after stop (repeatable), e.g. "x /8gx 0xfffffe..."')
     ap.add_argument('--cpu', default='cortex-a76')	# ARMv8.2 like Kryo 470, same ID_AA64MMFR0
     ap.add_argument('--kernel', help='matching unstripped kernel, for exact framebuffer text decoding (uses llvm-nm)')
+    ap.add_argument('--disk', help='raw disk image appended as virtio-blk on the first virtio-mmio transport (0x0a000000, kernel 0082+)')
     ap.add_argument('--fail-on-panic', action='store_true', help='exit 2 for a visible panic, 3 for incomplete/blank decoding; requires --kernel')
     a = ap.parse_args()
     if a.fail_on_panic and not a.kernel:
@@ -205,6 +206,10 @@ def main():
            '-device', f'loader,file={out}/ram.bin,addr={phys_base:#x},force-raw=on',
            '-device', f'loader,file={out}/stub.bin,addr={STUB_PA:#x},force-raw=on',
            '-device', f'loader,addr={STUB_PA:#x},cpu-num=0']
+    if a.disk:
+        cmd += ['-drive', f'file={a.disk},format=raw,if=none,id=hd0',
+                '-device', 'virtio-blk-device,drive=hd0',
+                '-global', 'virtio-mmio.force-legacy=false']
     if a.gdb:
         cmd += ['-S', '-gdb', 'tcp::1234']
     p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL)
