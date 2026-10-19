@@ -29,7 +29,7 @@ jobs:
 
       - name: Deps
         run: |
-          mkdir -p "$BIG" && df -h / /mnt
+          sudo mkdir -p "$BIG" && sudo chown -R runner "$BIG" && df -h / /mnt
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             hfsprogs qemu-system-arm libfuse3-dev bzip2 libbz2-dev zlib1g-dev \
