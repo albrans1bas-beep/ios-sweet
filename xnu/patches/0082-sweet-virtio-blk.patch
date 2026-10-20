@@ -12,10 +12,10 @@ index 6630131..207f6b4 100644
  bsd/dev/sweet_touch.c			standard
 diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
 new file mode 100644
-index 0000000..e46c504
+index 0000000..0325c66
 --- /dev/null
 +++ b/bsd/dev/sweet_virtio.c
-@@ -0,0 +1,771 @@
+@@ -0,0 +1,850 @@
 +/*
 + * SWEET virtio (QEMU virt board): virtio-mmio transport + virtio-blk disk.
 + *
@@ -48,6 +48,9 @@ index 0000000..e46c504
 +#include <miscfs/devfs/devfs.h>
 +#include <kern/locks.h>
 +#include <kern/clock.h>
++#include <kern/task.h>
++#include <kern/thread.h>
++#include <arm/thread.h>
 +#include <machine/machine_routines.h>
 +#include <arm/caches_internal.h>
 +#include <vm/pmap.h>
@@ -449,6 +452,74 @@ index 0000000..e46c504
 +	}
 +}
 +
++/* boot-arg sweet_sample=SECS: three times, print the user PC/LR (and a short
++ * frame-pointer chain) of every thread of SpringBoard. The boot UI shares the
++ * process with the rest of the shell, so the PCs show what the stuck startup
++ * waits in. */
++static int sweet_sample_ticks;
++static int sweet_sample_left;
++
++static int
++sweet_sample_proc(proc_t p, void *arg)
++{
++	task_t task;
++	thread_t th;
++	int i = 0;
++	char line[240];
++	int n;
++
++	if (strncmp(p->p_comm, "SpringBoard", MAXCOMLEN) != 0) {
++		return 0;
++	}
++	task = proc_task(p);
++	printf("SWEET SAMPLE: %s pid %d stat %d threads %d\n",
++	    p->p_comm, p->p_pid, p->p_stat, task->thread_count);
++	task_lock(task);
++	queue_iterate(&task->threads, th, thread_t, task_threads) {
++		arm_saved_state_t *ss = get_user_regs(th);
++		uint64_t pc, fp;
++
++		if (ss == NULL) {
++			continue;
++		}
++		pc = get_saved_state_pc(ss);
++		fp = get_saved_state_fp(ss);
++		n = snprintf(line, sizeof(line),
++		    "SWEET SAMPLE: th %d tid %llu st %d pc 0x%llx lr 0x%llx fp 0x%llx",
++		    i++, (unsigned long long)thread_tid(th), th->state, pc,
++		    get_saved_state_lr(ss), fp);
++		for (int f = 0; f < 6 && fp != 0 && (fp & 7) == 0 &&
++		    n < (int)sizeof(line) - 20; f++) {
++			uint64_t frame[2];
++			if (copyinmap(get_task_map(task), (user_addr_t)fp, frame,
++			    sizeof(frame)) != 0) {
++				break;
++			}
++			n += snprintf(line + n, sizeof(line) - n, " 0x%llx", frame[1]);
++			if (frame[0] <= fp) {
++				break;
++			}
++			fp = frame[0];
++		}
++		printf("%s\n", line);
++		if (i >= 24) {
++			break;
++		}
++	}
++	task_unlock(task);
++	return 1;
++}
++
++static void
++sweet_sample_timer(void *arg)
++{
++	printf("SWEET SAMPLE: tick %d\n", sweet_sample_left);
++	proc_iterate(PROC_ALLPROCLIST, sweet_sample_proc, NULL, NULL, NULL);
++	if (--sweet_sample_left > 0) {
++		timeout(sweet_sample_timer, NULL, sweet_sample_ticks);
++	}
++}
++
 +/* boot-arg sweetvio_test: verify the block layer in place.
 + * =1 read-only cross-checks (safe on a live root disk): read the same bytes
 + * whole and again in 512/4096/8192/16384-byte pieces, compare.
@@ -752,6 +823,14 @@ index 0000000..e46c504
 +		sweet_proc_ticks = (int)pdump * hz;
 +		sweet_proc_left = 6;
 +		timeout(sweet_proc_timer, NULL, sweet_proc_ticks);
++	}
++
++	uint32_t sample = 0;
++	PE_parse_boot_argn("sweet_sample", &sample, sizeof(sample));
++	if (sample && sweet_sample_left == 0) {
++		sweet_sample_ticks = (int)sample * hz;
++		sweet_sample_left = 3;
++		timeout(sweet_sample_timer, NULL, sweet_sample_ticks);
 +	}
 +
 +	sv.bmajor = bdevsw_add(-1, &sweet_vio_bdevsw);

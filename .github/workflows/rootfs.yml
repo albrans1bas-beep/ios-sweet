@@ -149,7 +149,7 @@ jobs:
       - name: QEMU smoke test
         run: |
           python3 tools/mkpayload.py kernel/kernel.development.sweet "$BIG"/sweet-qemu.adt \
-            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 sweetvio_test=1 sweetfb_noconsole=1 sweetproc_dump=120 sweet_exit_trace=1 -enable_kprintf_spam -noprogress wdt=-1"
+            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 sweetvio_test=1 sweetfb_noconsole=1 sweetproc_dump=120 sweet_exit_trace=1 sweet_sample=180 -enable_kprintf_spam -noprogress wdt=-1"
           sudo env PATH="$PATH" python3 tools/qemu-sweet.py "$BIG"/payload.bin qemu-out \
             --secs 600 --snap-every 60 --kernel kernel/kernel.development.sweet --disk "$BIG"/rootfs.img \
             --dump-symbol sweet_log_ring:0x400000 --dump-symbol sweet_log_total:8 \
@@ -173,6 +173,8 @@ jobs:
           grep -aE 'hfs_swap_BTNode|BlockMarkFreeInternal|panic' sweetlog.txt | head -20 || true
           echo "--- last process dump ---"
           awk '/SWEET PROC DUMP/{if (blk != "") last = blk; blk = $0 "\n"; next} /SWEET PROC: ppid/{blk = blk $0 "\n"} END{if (blk != "") last = blk; printf "%s", last}' sweetlog.txt | grep -a 'SpringBoard\|backboardd' || true
+          echo "--- SpringBoard thread samples ---"
+          grep -a 'SWEET SAMPLE:' sweetlog.txt | head -120 || true
           echo "--- SpringBoard-ish userland lines ---"
           grep -aiE 'springboard|backboardd|UIKit|FrontBoard|BKS|CoreAnimation|CAPortal' sweetlog.txt | grep -av 'SWEET AKS\|SWEET FB:\|SWEET SURF\|IOK \|exec ' | head -120 || true
           echo "--- last 40 console lines ---"
