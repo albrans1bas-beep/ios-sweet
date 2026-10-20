@@ -192,7 +192,7 @@ def main():
             name = '_' + name
         if name not in symbols:
             ap.error(f'symbol {spec!r} not in the kernel')
-        dumps.append((name, symbols[name], int(size, 0)))
+        dumps.append((name.lstrip('_'), symbols[name], int(size, 0)))
     os.makedirs(a.outdir, exist_ok=True)
     out = os.path.abspath(a.outdir)
     q_out = out.replace('\\', '/')	# QEMU chardev paths: forward slashes on Windows
