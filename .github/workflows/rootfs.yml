@@ -157,7 +157,7 @@ jobs:
       - name: QEMU smoke test
         run: |
           python3 tools/mkpayload.py kernel/kernel.development.sweet "$BIG"/sweet-qemu.adt \
-            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 sweetvio_test=1 sweetfb_noconsole=1 sweetproc_dump=300 sweet_exit_trace=1 sweet_sample=240 sweet_sample_names=lsd,containermanagerd,SpringBoard -enable_kprintf_spam -noprogress wdt=-1"
+            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 sweetvio_test=1 sweetfb_noconsole=1 sweetproc_dump=600 sweet_exit_trace=1 sweet_sample=900 sweet_sample_names=lsd,SpringBoard -enable_kprintf_spam -noprogress wdt=-1"
           sudo env PATH="$PATH" python3 tools/qemu-sweet.py "$BIG"/payload.bin qemu-out \
             --secs "${{ inputs.secs }}" --snap-every "${{ inputs.snap_every }}" --kernel kernel/kernel.development.sweet --disk "$BIG"/rootfs.img \
             --dump-symbol sweet_log_ring:0x400000 --dump-symbol sweet_log_total:8 \
@@ -173,6 +173,9 @@ jobs:
           echo
           echo "--- fb.txt.b64 ---"
           gzip -9 -c qemu-out/fb.txt | base64 -w0 || true
+          echo
+          echo "--- fb.png.b64 ---"
+          base64 -w0 qemu-out/fb.png || true
           echo
           grep -aE 'SWEET VIO TEST: level 1: [0-9]+ checks, 0 failures' sweetlog.txt
           grep -aq 'exec SpringBoard' sweetlog.txt
@@ -275,13 +278,14 @@ jobs:
           done
           sudo find /mnt/post/private/var/db/lsd -maxdepth 2 -type f -printf '%s %p\n' 2>/dev/null | head -20 || true
           echo "--- container counts ---"
+          printf 'Applications: '; sudo ls /mnt/post/Applications 2>/dev/null | wc -l || true
           for d in /mnt/post/private/var/mobile/Containers/Data/Application \
                    /mnt/post/private/var/mobile/Containers/Data/PluginKitPlugin \
                    /mnt/post/private/var/mobile/Containers/Data/InternalDaemon \
                    /mnt/post/private/var/mobile/Containers/Shared/AppGroup; do
             printf '%s: ' "$d"; sudo ls "$d" 2>/dev/null | wc -l || true
           done
-          sudo find /mnt/post/private/var/mobile/Containers -maxdepth 3 \
+          sudo find /mnt/post/private/var/mobile/Containers -maxdepth 5 \
             -name '.com.apple.mobile_container_manager.metadata.plist' 2>/dev/null | wc -l || true
           echo "--- crash report dirs ---"
           for d in /mnt/post/private/var/mobile/Library/Logs/CrashReporter \
