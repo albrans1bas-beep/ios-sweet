@@ -161,9 +161,11 @@ jobs:
             echo "panic observed"; exit 1
           fi
           python3 tools/sweetlog-extract.py qemu-out/sweet_log_ring.bin qemu-out/sweet_log_total.bin sweetlog.txt
-          grep -E 'SWEET VIO TEST: level 1: [0-9]+ checks, 0 failures' sweetlog.txt
-          grep -q 'exec SpringBoard' sweetlog.txt
-          echo "hfs corruption lines: $(grep -c 'hfs_swap_BTNode\|BlockMarkFreeInternal' sweetlog.txt || true)"
+          grep -aE 'SWEET VIO TEST: level 1: [0-9]+ checks, 0 failures' sweetlog.txt
+          grep -aq 'exec SpringBoard' sweetlog.txt
+          grep -aE 'exec SpringBoard' sweetlog.txt
+          echo "hfs corruption lines: $(grep -ac 'hfs_swap_BTNode\|BlockMarkFreeInternal' sweetlog.txt || true)"
+          grep -aE 'hfs_swap_BTNode|BlockMarkFreeInternal|panic' sweetlog.txt | head -20 || true
 
       - name: fsck after boot
         if: always()
@@ -196,6 +198,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: rootfs-logs
           path: stage-logs/
