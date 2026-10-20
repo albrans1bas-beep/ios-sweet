@@ -165,6 +165,7 @@ jobs:
           grep -aE 'exec SpringBoard' sweetlog.txt
           echo "hfs corruption lines: $(grep -ac 'hfs_swap_BTNode\|BlockMarkFreeInternal' sweetlog.txt || true)"
           grep -aE 'hfs_swap_BTNode|BlockMarkFreeInternal|panic' sweetlog.txt | head -20 || true
+          grep -aE 'SWEET PROC DUMP|SWEET PROC:' sweetlog.txt | sed 's/SWEET PROC: //' || true
 
       - name: fsck after boot
         if: always()
