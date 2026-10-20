@@ -165,8 +165,8 @@ def main():
     ap.add_argument('--dump-symbol', action='append', default=[], metavar='NAME:SIZE',
                     help='at snapshot time pmemsave the kernel global NAME (SIZE bytes, 0x.. ok) to OUTDIR/NAME.bin; repeatable, requires --kernel')
     ap.add_argument('--fail-on-panic', action='store_true', help='exit 2 for a visible panic, 3 for incomplete/blank decoding; requires --kernel')
-ap.add_argument('--snap-every', type=float, default=0, metavar='SECS',
-                help='save fb-NNNs.png every SECS seconds of guest time (0 = only the final one)')
+    ap.add_argument('--snap-every', type=float, default=0, metavar='SECS',
+                    help='save fb-NNNs.png every SECS seconds of guest time (0 = only the final one)')
     a = ap.parse_args()
     if a.fail_on_panic and not a.kernel:
         ap.error('--fail-on-panic requires --kernel')
