@@ -57,6 +57,60 @@ still look impossible, add the sampled thread state (`th->state`) and/or
 sample backboardd to validate the slide; otherwise follow the blocking
 function (expect a mach_msg/dispatch wait on a service that never answers).
 
+### >>> UPDATE 2026-10-20 (evening) - symbolication works; SpringBoard waits on lsd's first-boot app scan; lsd starts after SpringBoard <<<
+
+**Commits:** `37a006c` (verbose a2s + 16-address cap; drop `--cache` and
+stderr suppression), `ae2c3b9` (sampler takes `sweet_sample_names` list;
+sample SpringBoard+lsd+backboardd), `bb66cb5` (per-daemon lsd plist
+RunAtLoad + drop launchd.db), `6aec496` (compiled launchd cache edit),
+`68761d6` (30-min run input, SpringBoard-first symbolication, LS state dump).
+Kernel run 39473867944 green; rootfs runs 39469844287 / 39474956223 /
+39480843892 / 39486532750 green; long run 39490835644.
+
+**Findings (verified with real symbols, run 39469844287):**
+- The slide was right and `ipsw dyld a2s` needed no `--cache`; the empty
+  output was only the suppressed stderr. Guest cache is arm64, `.symbols`
+  subcache (592 MB) is present.
+- SpringBoard t0 at 180 s: `LSContextInitCommon` -> `_LSContextInitWithOptions`
+  -> `LaunchServices::Database::Context::_get` -> `-[LSApplicationRecord
+  initWithBundleIdentifier:...]` -> `ControlCenterServices`
+  `-[CCSModuleRepository _queue_filterModuleMetadataByAssociatedBundleAvailability:]`
+  -> `mach_msg2_trap`: it is waiting for lsd to answer a LaunchServices
+  database query. Not a crash, not a UI thread - it is early LS init.
+- lsd t0: `_LSServerMain` -> `+[_LSInstallProgressService beginListening]`
+  -> `performJournalRecovery` -> `dispatch_sync` ->
+  `_DISPATCH_WAIT_FOR_QUEUE_` -> `_kevent_id` (waiting for a queue).
+  lsd t1/t3: `__ulock_wait` -> `_dispatch_group_wait_slow` ->
+  `_LAUNCH_SERVICES_CLIENTS_ARE_WAITING_FOR_THE_DATABASE_TO_FINISH_SEEDING_`
+  -> `LSDatabaseBlockingFetchClient getServerStoreBlocking...` (the client
+  request SpringBoard is waiting on).
+- lsd's seed thread (run 39486532750) is alive and progressing:
+  `MIFilesystemScanner _scanAppsDirectory` -> `MILaunchServicesDatabaseGatherer
+  scanExecutableBundle` -> `MIExecutableBundle _dataContainerCreatingIfNeeded`
+  -> `MIContainer makeContainerLiveReplacingContainer` ->
+  `container_xpc_send_sync_message` -> sync XPC to containermanagerd (pid 66,
+  alive, servicing AKS sel 17 container calls). So the first boot scans
+  /Applications and creates a data container per bundle over synchronous XPC;
+  under TCG this is the visible delay, not a hard deadlock (thread PCs change
+  between samples).
+- **lsd starts late by design of this boot**: `exec SpringBoard` line 704,
+  `exec lsd` line 813. lsd is demand-started by the first LaunchServices
+  client. The compiled launchd job cache has 532 jobs and
+  `com.apple.lsd` with MachServices only; adding `RunAtLoad` to the daemon
+  plist AND to `/System/Library/xpc/launchd.plist` did not change the order
+  (launchd logs "(system) entering ondemand mode"; RunAtLoad is not applied
+  to lazily loaded jobs). Removing `/private/var/db/com.apple.xpc.launchd`
+  did not change it either.
+- **Hypothesis under test (run 39490835644):** the boot is merely slow.
+  SpringBoard should proceed once the LS seed scan finishes. The 30-min run
+  samples at 10/20/30 min (sweet_sample=600), snapshots every 120 s, and
+  prints `/private/var/db/lsd` + LS prefs from the image afterwards.
+
+**Next:** if SpringBoard still waits at 30 min, run longer once or instrument
+the seed (count `container_replace` calls / print LS DB size per sample).
+If SpringBoard proceeds, make the default smoke run long enough or pre-seed
+the LS database so later runs are fast.
+
 ### >>> UPDATE 2026-10-20 - SPRINGBOARD DRAWS THE APPLE BOOT SCREEN; virtio self-test clean; no HFS corruption in run 39399391323 <<<
 
 **Commits:** `4d13023` (0082: data-desc direction flags per request - WRITE
