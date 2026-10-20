@@ -165,7 +165,12 @@ jobs:
           grep -aE 'exec SpringBoard' sweetlog.txt
           echo "hfs corruption lines: $(grep -ac 'hfs_swap_BTNode\|BlockMarkFreeInternal' sweetlog.txt || true)"
           grep -aE 'hfs_swap_BTNode|BlockMarkFreeInternal|panic' sweetlog.txt | head -20 || true
-          grep -aE 'SWEET PROC DUMP|SWEET PROC:' sweetlog.txt | sed 's/SWEET PROC: //' || true
+          echo "--- last process dump ---"
+          awk '/SWEET PROC DUMP/{if (blk != "") last = blk; blk = $0 "\n"; next} /SWEET PROC: ppid/{blk = blk $0 "\n"} END{if (blk != "") last = blk; printf "%s", last}' sweetlog.txt | grep -a 'SpringBoard\|backboardd' || true
+          echo "--- SpringBoard-ish userland lines ---"
+          grep -aiE 'springboard|backboardd|UIKit|FrontBoard|BKS|CoreAnimation|CAPortal' sweetlog.txt | grep -av 'SWEET AKS\|SWEET FB:\|SWEET SURF\|IOK \|exec ' | head -120 || true
+          echo "--- last 40 console lines ---"
+          tail -c 20000 sweetlog.txt | tr -d '\000' | tail -40
 
       - name: fsck after boot
         if: always()

@@ -71,6 +71,23 @@ def launchd(root):
     print(f'launchd.plist: {renamed} _PanicOnCrash renamed, {len(removed)} CommCenter jobs removed')
 
 
+def stdio_to_console(root, labels):
+    """Point launchd job stdio at /dev/console so userland chatter lands in the
+    kernel console ring (sweetlog) - QEMU bring-up debugging."""
+    path = os.path.join(root, 'System/Library/xpc/launchd.plist')
+    st = os.stat(path)
+    plist = load(path)
+    jobs = plist['LaunchDaemons']
+    hit = 0
+    for job in jobs.values():
+        if job.get('Label') in labels:
+            job['StandardOutPath'] = '/dev/console'
+            job['StandardErrorPath'] = '/dev/console'
+            hit += 1
+    save(path, plist, st.st_uid, st.st_gid, st.st_mode & 0o7777)
+    print(f'console stdio for {hit} jobs: {sorted(labels)}')
+
+
 def containers(root):
     base = os.path.join(root, 'private/var/containers')
     for sub, uid in (('Bundle', 33), ('Data/System', 0), ('Shared/SystemGroup', 0), ('Temp', 0)):
@@ -127,6 +144,7 @@ def main():
         sys.exit(__doc__)
     root = sys.argv[1]
     launchd(root)
+    stdio_to_console(root, {'com.apple.SpringBoard', 'com.apple.backboardd'})
     containers(root)
     activation(root)
     audio(root)
