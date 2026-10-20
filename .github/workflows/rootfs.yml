@@ -171,11 +171,36 @@ jobs:
           grep -aiE 'springboard|backboardd|UIKit|FrontBoard|BKS|CoreAnimation|CAPortal' sweetlog.txt | grep -av 'SWEET AKS\|SWEET FB:\|SWEET SURF\|IOK \|exec ' | head -120 || true
           echo "--- last 40 console lines ---"
           tail -c 20000 sweetlog.txt | tr -d '\000' | tail -40
+          echo "--- launchd lines (tail) ---"
+          grep -a 'xpc.launchd' sweetlog.txt | tail -60 || true
+          echo "--- crash/kill lines ---"
+          grep -aE 'CRASH|SIGKILL|SIGABRT|SIGSEGV|exited|abnormal|Jetsam|jetsam' sweetlog.txt | tail -40 || true
 
       - name: fsck after boot
         if: always()
         run: |
           fsck.hfsplus -f -n "$BIG"/rootfs.img 2>&1 | tail -30 | tee fsck-after.txt || true
+
+      - name: Collect crash reports from the image
+        if: always()
+        run: |
+          sudo mkdir -p /mnt/post
+          sudo mount -o ro,loop "$BIG"/rootfs.img /mnt/post || exit 0
+          echo "--- crash report dirs ---"
+          for d in /mnt/post/private/var/mobile/Library/Logs/CrashReporter \
+                   /mnt/post/private/var/log/CrashReporter \
+                   /mnt/post/private/var/Logs/CrashReporter; do
+            [ -d "$d" ] && sudo ls -lat "$d" | head -20 && echo "  ^ $d"
+          done
+          echo "--- ips files (newest first) ---"
+          sudo find /mnt/post/private/var -name '*.ips' -o -name '*.panic' 2>/dev/null | head -30
+          NEW=$(sudo find /mnt/post/private/var -name '*.ips' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+          if [ -n "$NEW" ]; then
+            echo "=== newest crash report: $NEW ==="
+            sudo head -c 30000 "$NEW" || true
+            sudo cp "$NEW" /tmp/newest.ips
+          fi
+          sudo umount /mnt/post || true
 
       - name: Stage and compress artifacts
         if: always()
@@ -188,6 +213,7 @@ jobs:
           python3 tools/sweetlog-extract.py qemu-out/sweet_log_ring.bin qemu-out/sweet_log_total.bin \
             stage-logs/sweetlog.txt 2>/dev/null || true
           cp fsck-after.txt stage-logs/ 2>/dev/null || true
+          cp /tmp/newest.ips stage-logs/crash-newest.ips 2>/dev/null || true
           cp "$BIG"/payload.bin "$BIG"/sweet-qemu.adt stage-logs/ 2>/dev/null || true
           if [ "${{ inputs.keep_image }}" = "true" ]; then
             gzip -1 "$BIG"/rootfs.img 2>/dev/null || true
