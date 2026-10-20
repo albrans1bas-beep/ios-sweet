@@ -86,7 +86,7 @@ jobs:
           ./ipswbin download ipsw --device "$IPSW_DEVICE" --build "$IPSW_BUILD" \
             --confirm --output ipsw-dl
           mv ipsw-dl/*.ipsw ipsw.ipsw
-          rm -rf ipsw-dl ipswbin ipsw_*_linux_x86_64.tar.gz manpages LICENSE README.md
+          rm -rf ipsw-dl ipsw_*_linux_x86_64.tar.gz manpages LICENSE README.md
           df -h "$PWD"
         env:
           GH_TOKEN: ${{ github.token }}
@@ -174,7 +174,7 @@ jobs:
           echo "--- last process dump ---"
           awk '/SWEET PROC DUMP/{if (blk != "") last = blk; blk = $0 "\n"; next} /SWEET PROC: ppid/{blk = blk $0 "\n"} END{if (blk != "") last = blk; printf "%s", last}' sweetlog.txt | grep -a 'SpringBoard\|backboardd' || true
           echo "--- SpringBoard thread samples ---"
-          grep -a 'SWEET SAMPLE:' sweetlog.txt | head -120 || true
+          grep -aE 'SWEET SAMPLE:|SMP (SpringBoard|backboardd)' sweetlog.txt | head -160 || true
           echo "--- SpringBoard-ish userland lines ---"
           grep -aiE 'springboard|backboardd|UIKit|FrontBoard|BKS|CoreAnimation|CAPortal' sweetlog.txt | grep -av 'SWEET AKS\|SWEET FB:\|SWEET SURF\|IOK \|exec ' | head -120 || true
           echo "--- last 40 console lines ---"
@@ -187,6 +187,45 @@ jobs:
           grep -a 'SWEET EXIT:' sweetlog.txt | tail -80 || true
           echo "--- exits by process ---"
           grep -a 'SWEET EXIT:' sweetlog.txt | awk '{print $8}' | sort | uniq -c | sort -rn | head -20 || true
+
+      - name: Symbolicate SpringBoard samples
+        if: always()
+        run: |
+          [ -f sweetlog.txt ] || exit 0
+          python3 - <<'EOF' > sample-addrs.txt
+          import re
+          addrs, seen, slide = [], set(), None
+          for line in open('sweetlog.txt', encoding='utf-8', errors='replace'):
+              m = re.search(r'SMP SpringBoard\[\d+\] slide (0x[0-9a-f]+)', line)
+              if m:
+                  slide = int(m.group(1), 16)
+                  continue
+              if slide is None or 'SMP SpringBoard' not in line:
+                  continue
+              for tok in re.findall(r'(?:pc|lr) (0x[0-9a-f]+)', line):
+                  addrs.append(int(tok, 16) - slide)
+              b = line.find(' bt ')
+              if b >= 0:
+                  for tok in re.findall(r'0x[0-9a-f]{6,}', line[b:]):
+                      addrs.append(int(tok, 16) - slide)
+          out = [a for a in addrs if 0x180000000 <= a < 0x280000000 and not (a in seen or seen.add(a))]
+          for a in out[:64]:
+              print(hex(a))
+          import sys
+          print('addresses:', len(out), file=sys.stderr)
+          EOF
+          if [ ! -s sample-addrs.txt ]; then echo "no sample addresses"; exit 0; fi
+          sudo mkdir -p /mnt/dsc
+          sudo fsck.hfsplus -fy "$BIG"/rootfs.img >/dev/null 2>&1 || true
+          sudo mount -o loop,force "$BIG"/rootfs.img /mnt/dsc || exit 0
+          trap 'sudo umount /mnt/dsc' EXIT
+          DSC=/mnt/dsc/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64e
+          if [ ! -f "$DSC" ]; then echo "no dyld cache at $DSC"; exit 0; fi
+          echo "--- symbolicated SpringBoard sample frames ---"
+          while read -r u; do
+            echo "== $u"
+            "$BIG"/ipswbin dyld a2s "$DSC" "$u" --cache "$BIG"/dsc.a2s -d 2>/dev/null | head -2 || true
+          done < sample-addrs.txt
 
       - name: fsck after boot
         if: always()
