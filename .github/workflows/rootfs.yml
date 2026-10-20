@@ -219,8 +219,14 @@ jobs:
           sudo fsck.hfsplus -fy "$BIG"/rootfs.img >/dev/null 2>&1 || true
           sudo mount -o loop,force "$BIG"/rootfs.img /mnt/dsc || exit 0
           trap 'sudo umount /mnt/dsc' EXIT
-          DSC=/mnt/dsc/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64e
-          if [ ! -f "$DSC" ]; then echo "no dyld cache at $DSC"; exit 0; fi
+          CDIR=/mnt/dsc/System/Library/Caches/com.apple.dyld
+          echo "--- cache dir ---"; sudo ls -la "$CDIR" | head -12 || true
+          DSC="$CDIR/dyld_shared_cache_arm64"
+          if [ ! -f "$DSC" ]; then
+            DSC=$(sudo find /mnt/dsc -name 'dyld_shared_cache_arm64' -type f | head -1)
+          fi
+          if [ -z "$DSC" ] || [ ! -f "$DSC" ]; then echo "no dyld cache"; exit 0; fi
+          echo "using $DSC"
           echo "--- symbolicated SpringBoard sample frames ---"
           while read -r u; do
             echo "== $u"
