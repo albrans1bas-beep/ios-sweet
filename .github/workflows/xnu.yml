@@ -130,7 +130,9 @@ jobs:
             gh release create kernel-latest --prerelease --title kernel-latest \
               --notes "Rolling SWEET kernel build (xnu.yml); not a product release."
           find out -maxdepth 1 -type f -print
-          gh release upload kernel-latest out/kernel.* out/SHA256SUMS --clobber
+          for f in out/kernel.*.sweet out/SHA256SUMS; do
+            [ -f "$f" ] && gh release upload kernel-latest "$f" --clobber
+          done
 
       - uses: actions/upload-artifact@v4
         if: always()
