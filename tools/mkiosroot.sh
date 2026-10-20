@@ -112,6 +112,33 @@ printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
 	'<plist version="1.0"><dict><key>KeyBagKeys</key><data>U1dFRVQ=</data></dict></plist>' |
 	sudo install -m 0600 -o 0 -g 0 /dev/stdin "$work/root/private/var/keybags/systembag.kb"
 
+# lsd's LaunchDaemon is demand-started by the first LaunchServices client in
+# this userland (SpringBoard); its startup journal recovery then deadlocks
+# with the queued blocking database fetch (lsd main thread waits in
+# dispatch_sync while a worker waits for seeding, SpringBoard waits for lsd).
+# Start it at boot so it seeds before any client asks, and drop the factory
+# launchd job cache so the edited plist is read.
+lsd_plist="$work/root/System/Library/LaunchDaemons/com.apple.lsd.plist"
+if sudo test -f "$lsd_plist"; then
+	sudo python3 - "$lsd_plist" <<'PY'
+import plistlib, sys
+p = sys.argv[1]
+with open(p, 'rb') as f:
+	d = plistlib.load(f)
+print('lsd plist before:', d)
+d['RunAtLoad'] = True
+with open(p, 'wb') as f:
+	plistlib.dump(d, f, fmt=plistlib.FMT_BINARY)
+print('lsd plist after:', d)
+PY
+else
+	echo "no lsd plist at $lsd_plist; candidates:"
+	sudo find "$work/root" -name '*lsd*.plist' | head
+fi
+sudo find "$work/root/private/var/db" -maxdepth 2 -iname '*launchd*' -print 2>/dev/null || true
+sudo rm -rf "$work/root/private/var/db/com.apple.xpc.launchd" \
+	"$work/root/private/var/db/launchd.db"
+
 df -h "$work/root"
 sudo umount "$work/root"
 # Linux hfsplus decomposes some non-ASCII names (localized Shortcuts examples)
