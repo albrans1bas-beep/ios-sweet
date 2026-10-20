@@ -1,0 +1,35 @@
+diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
+index fde499c..f4e5396 100644
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -75,6 +75,7 @@
+ #include <machine/reg.h>
+ #include <machine/psl.h>
+ #include <stdatomic.h>
++#include <pexpert/pexpert.h>
+ 
+ #include <sys/param.h>
+ #include <sys/systm.h>
+@@ -1485,6 +1486,22 @@ exit_with_reason(proc_t p, int rv, int *retval, boolean_t thread_can_terminate,
+ 	}
+ #endif
+ 
++	{
++		static int sweet_exit_trace = -1;
++
++		if (sweet_exit_trace < 0) {
++			char tbuf[8];
++
++			sweet_exit_trace = PE_parse_boot_argn("sweet_exit_trace", tbuf,
++			    sizeof(tbuf)) && tbuf[0] == '1';
++		}
++		if (sweet_exit_trace) {
++			printf("SWEET EXIT: pid %d ppid %d comm %s rv 0x%x code %d sig %d\n",
++			    proc_getpid(p), p->p_ppid, p->p_comm, rv, WEXITSTATUS(rv),
++			    WTERMSIG(rv));
++		}
++	}
++
+ 	/*
+ 	 * If a thread in this task has already
+ 	 * called exit(), then halt any others
