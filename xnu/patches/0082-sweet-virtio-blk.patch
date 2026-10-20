@@ -12,10 +12,10 @@ index 6630131..207f6b4 100644
  bsd/dev/sweet_touch.c			standard
 diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
 new file mode 100644
-index 0000000..f7454a5
+index 0000000..c6c07ea
 --- /dev/null
 +++ b/bsd/dev/sweet_virtio.c
-@@ -0,0 +1,648 @@
+@@ -0,0 +1,737 @@
 +/*
 + * SWEET virtio (QEMU virt board): virtio-mmio transport + virtio-blk disk.
 + *
@@ -308,10 +308,12 @@ index 0000000..f7454a5
 +	desc[base].len = sizeof(*hdr);
 +	desc[base].flags = VRING_DESC_F_NEXT;
 +	desc[base].next = (uint16_t)(base + 1);
-+	/* descriptor 1: the data (device writes it on reads, reads it on writes) */
++	/* descriptor 1: the data; device writes it on reads, only reads it on
++	 * writes (VRING_DESC_F_WRITE means the DEVICE may write the buffer -
++	 * setting it on a write request breaks the in/out split in QEMU). */
 +	desc[base + 1].addr = sv.dma_pa + OFF_BOUNCE;
 +	desc[base + 1].len = len;
-+	desc[base + 1].flags = VRING_DESC_F_NEXT | VRING_DESC_F_WRITE;
++	desc[base + 1].flags = VRING_DESC_F_NEXT | (write ? 0 : VRING_DESC_F_WRITE);
 +	desc[base + 1].next = (uint16_t)(base + 2);
 +	/* descriptor 2: the one-byte bl status (device writes it) — also the
 +	 * 'zero sized buffers are not allowed' guard: it must never be 0. */
@@ -419,6 +421,87 @@ index 0000000..f7454a5
 +sweet_vio_close(__unused dev_t dev, __unused int flags, __unused int devtype, __unused struct proc *p)
 +{
 +	return 0;
++}
++
++/* boot-arg sweetvio_test: verify the block layer in place.
++ * =1 read-only cross-checks (safe on a live root disk): read the same bytes
++ * whole and again in 512/4096/8192/16384-byte pieces, compare.
++ * =2 additionally write a pattern and read it back (test disks only). */
++static void
++sweet_vio_self_test(uint32_t level)
++{
++	const size_t test_sz = 128 * 1024;
++	const uint64_t offs[] = {
++		2048u,                       /* 1 MiB */
++		65536u,                      /* 32 MiB */
++		4194312u,                    /* 2 GiB */
++		(sv.capacity / 2u) & ~(uint64_t)255u,
++		sv.capacity - 257u,          /* last full 128 KiB */
++	};
++	int fails = 0, checks = 0;
++
++	uint8_t *full = kalloc_data(test_sz, Z_WAITOK | Z_ZERO);
++	uint8_t *part = kalloc_data(test_sz, Z_WAITOK | Z_ZERO);
++	if (!full || !part) {
++		printf("SWEET VIO TEST: no memory/n");
++		return;
++	}
++	lck_mtx_lock(&sweet_vio_lock);
++	for (size_t r = 0; r < sizeof(offs) / sizeof(offs[0]); r++) {
++		uint64_t sec = offs[r];
++		if ((sec + test_sz / 512u) > sv.capacity) {
++			continue;
++		}
++		if (vio_read_blocks(sec, full, test_sz / 512u)) {
++			printf("SWEET VIO TEST: sector %llu read failed/n", sec);
++			fails++;
++			continue;
++		}
++		static const uint32_t chunks[] = { 512, 4096, 8192, 16384 };
++		for (size_t c = 0; c < sizeof(chunks) / sizeof(chunks[0]); c++) {
++			uint32_t cs = chunks[c];
++			checks++;
++			for (uint32_t at = 0; at < test_sz; at += cs) {
++				if (vio_read_blocks(sec + at / 512u, part + at, cs / 512u)) {
++					printf("SWEET VIO TEST: sector %llu+%u read failed (chunk %u)/n",
++					    sec, at, cs);
++					fails++;
++					break;
++				}
++			}
++			if (memcmp(full, part, test_sz) == 0) {
++				continue;
++			}
++			for (uint32_t i = 0; i < test_sz; i++) {
++				if (full[i] != part[i]) {
++					printf("SWEET VIO TEST: sector %llu chunk %u byte %u "
++					    "whole 0x%02x vs piece 0x%02x/n",
++					    sec, cs, i, full[i], part[i]);
++					fails++;
++					break;
++				}
++			}
++		}
++		if (level < 2) {
++			continue;
++		}
++		for (uint32_t i = 0; i < test_sz; i += 8) {
++			*(uint64_t *)(part + i) =
++			    ((uint64_t)i << 20) ^ (uint64_t)sec ^ 0x5150454553ULL;
++		}
++		CleanPoC_DcacheRegion((vm_offset_t)part, test_sz);
++		checks++;
++		if (vio_write_blocks(sec, part, test_sz / 512u) ||
++		    vio_read_blocks(sec, full, test_sz / 512u) ||
++		    memcmp(full, part, test_sz) != 0) {
++			printf("SWEET VIO TEST: sector %llu write/readback failed/n", sec);
++			fails++;
++		}
++	}
++	lck_mtx_unlock(&sweet_vio_lock);
++	kfree_data(full, test_sz);
++	kfree_data(part, test_sz);
++	printf("SWEET VIO TEST: level %u: %d checks, %d failures/n", level, checks, fails);
 +}
 +
 +static void
@@ -629,6 +712,12 @@ index 0000000..f7454a5
 +	lck_mtx_unlock(&sweet_vio_lock);
 +	if (error) {
 +		return error;
++	}
++
++	uint32_t test = 0;
++	PE_parse_boot_argn("sweetvio_test", &test, sizeof(test));
++	if (test >= 1 && test <= 2) {
++		sweet_vio_self_test(test);
 +	}
 +
 +	sv.bmajor = bdevsw_add(-1, &sweet_vio_bdevsw);
