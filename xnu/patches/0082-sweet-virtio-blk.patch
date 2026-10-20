@@ -12,10 +12,10 @@ index 6630131..207f6b4 100644
  bsd/dev/sweet_touch.c			standard
 diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
 new file mode 100644
-index 0000000..0325c66
+index 0000000..62c63d6
 --- /dev/null
 +++ b/bsd/dev/sweet_virtio.c
-@@ -0,0 +1,850 @@
+@@ -0,0 +1,818 @@
 +/*
 + * SWEET virtio (QEMU virt board): virtio-mmio transport + virtio-blk disk.
 + *
@@ -459,55 +459,23 @@ index 0000000..0325c66
 +static int sweet_sample_ticks;
 +static int sweet_sample_left;
 +
++extern void sweet_sample_task(const char *name, int pid, task_t task);
++
 +static int
 +sweet_sample_proc(proc_t p, void *arg)
 +{
++	char name[32];
 +	task_t task;
-+	thread_t th;
-+	int i = 0;
-+	char line[240];
-+	int n;
 +
-+	if (strncmp(p->p_comm, "SpringBoard", MAXCOMLEN) != 0) {
++	proc_name(proc_pid(p), name, sizeof(name));
++	if (strncmp(name, "SpringBoard", sizeof(name)) != 0) {
 +		return 0;
 +	}
 +	task = proc_task(p);
-+	printf("SWEET SAMPLE: %s pid %d stat %d threads %d\n",
-+	    p->p_comm, p->p_pid, p->p_stat, task->thread_count);
-+	task_lock(task);
-+	queue_iterate(&task->threads, th, thread_t, task_threads) {
-+		arm_saved_state_t *ss = get_user_regs(th);
-+		uint64_t pc, fp;
-+
-+		if (ss == NULL) {
-+			continue;
-+		}
-+		pc = get_saved_state_pc(ss);
-+		fp = get_saved_state_fp(ss);
-+		n = snprintf(line, sizeof(line),
-+		    "SWEET SAMPLE: th %d tid %llu st %d pc 0x%llx lr 0x%llx fp 0x%llx",
-+		    i++, (unsigned long long)thread_tid(th), th->state, pc,
-+		    get_saved_state_lr(ss), fp);
-+		for (int f = 0; f < 6 && fp != 0 && (fp & 7) == 0 &&
-+		    n < (int)sizeof(line) - 20; f++) {
-+			uint64_t frame[2];
-+			if (copyinmap(get_task_map(task), (user_addr_t)fp, frame,
-+			    sizeof(frame)) != 0) {
-+				break;
-+			}
-+			n += snprintf(line + n, sizeof(line) - n, " 0x%llx", frame[1]);
-+			if (frame[0] <= fp) {
-+				break;
-+			}
-+			fp = frame[0];
-+		}
-+		printf("%s\n", line);
-+		if (i >= 24) {
-+			break;
-+		}
++	if (task != TASK_NULL) {
++		sweet_sample_task(name, proc_pid(p), task);
 +	}
-+	task_unlock(task);
-+	return 1;
++	return 0;
 +}
 +
 +static void
