@@ -2,6 +2,11 @@ name: rootfs
 
 on:
   workflow_dispatch:
+    inputs:
+      keep_image:
+        description: 'Upload the ~6 GB rootfs image artifact (storage quota!)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -175,15 +180,17 @@ jobs:
             stage-logs/sweetlog.txt 2>/dev/null || true
           cp fsck-after.txt stage-logs/ 2>/dev/null || true
           cp "$BIG"/payload.bin "$BIG"/sweet-qemu.adt stage-logs/ 2>/dev/null || true
-          gzip -1 "$BIG"/rootfs.img 2>/dev/null || true
-          ls -la "$BIG"/rootfs.img.gz stage-logs
+          if [ "${{ inputs.keep_image }}" = "true" ]; then
+            gzip -1 "$BIG"/rootfs.img 2>/dev/null || true
+          fi
+          ls -la "$BIG"/rootfs.img.gz stage-logs 2>/dev/null || ls -la stage-logs
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && inputs.keep_image
         with:
           name: ios-rootfs
           path: /mnt/heavy/rootfs.img.gz
-          retention-days: 7
+          retention-days: 3
           if-no-files-found: warn
 
       - uses: actions/upload-artifact@v4
