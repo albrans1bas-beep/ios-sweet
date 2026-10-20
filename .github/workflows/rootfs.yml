@@ -175,11 +175,16 @@ jobs:
           grep -a 'xpc.launchd' sweetlog.txt | tail -60 || true
           echo "--- crash/kill lines ---"
           grep -aE 'CRASH|SIGKILL|SIGABRT|SIGSEGV|exited|abnormal|Jetsam|jetsam' sweetlog.txt | tail -40 || true
+          echo "--- process exits (tail) ---"
+          grep -a 'SWEET EXIT:' sweetlog.txt | tail -80 || true
+          echo "--- exits by process ---"
+          grep -a 'SWEET EXIT:' sweetlog.txt | awk '{print $8}' | sort | uniq -c | sort -rn | head -20 || true
 
       - name: fsck after boot
         if: always()
         run: |
           fsck.hfsplus -f -n "$BIG"/rootfs.img 2>&1 | tail -30 | tee fsck-after.txt || true
+          echo "--- fsck-after ---"; tail -12 fsck-after.txt || true
 
       - name: Collect crash reports from the image
         if: always()
