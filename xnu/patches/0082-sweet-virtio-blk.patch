@@ -12,10 +12,10 @@ index 6630131..207f6b4 100644
  bsd/dev/sweet_touch.c			standard
 diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
 new file mode 100644
-index 0000000..62c63d6
+index 0000000..074ef4e
 --- /dev/null
 +++ b/bsd/dev/sweet_virtio.c
-@@ -0,0 +1,818 @@
+@@ -0,0 +1,836 @@
 +/*
 + * SWEET virtio (QEMU virt board): virtio-mmio transport + virtio-blk disk.
 + *
@@ -453,11 +453,14 @@ index 0000000..62c63d6
 +}
 +
 +/* boot-arg sweet_sample=SECS: three times, print the user PC/LR (and a short
-+ * frame-pointer chain) of every thread of SpringBoard. The boot UI shares the
-+ * process with the rest of the shell, so the PCs show what the stuck startup
-+ * waits in. */
++ * frame-pointer chain) of every thread of the processes named in
++ * sweet_sample_names (comma separated, default SpringBoard). The boot UI
++ * shares the process with the rest of the shell, so the PCs show what the
++ * stuck startup waits in; lsd is sampled too because LaunchServices calls in
++ * SpringBoard wait for its replies. */
 +static int sweet_sample_ticks;
 +static int sweet_sample_left;
++static char sweet_sample_names[96];
 +
 +extern void sweet_sample_task(const char *name, int pid, task_t task);
 +
@@ -465,15 +468,25 @@ index 0000000..62c63d6
 +sweet_sample_proc(proc_t p, void *arg)
 +{
 +	char name[32];
++	size_t n;
 +	task_t task;
 +
 +	proc_name(proc_pid(p), name, sizeof(name));
-+	if (strncmp(name, "SpringBoard", sizeof(name)) != 0) {
-+		return 0;
-+	}
-+	task = proc_task(p);
-+	if (task != TASK_NULL) {
-+		sweet_sample_task(name, proc_pid(p), task);
++	n = strlen(name);
++	for (const char *t = sweet_sample_names; *t; ) {
++		const char *end = strchr(t, ',');
++		size_t tl = end ? (size_t)(end - t) : strlen(t);
++		if (tl == n && n > 0 && strncmp(t, name, n) == 0) {
++			task = proc_task(p);
++			if (task != TASK_NULL) {
++				sweet_sample_task(name, proc_pid(p), task);
++			}
++			break;
++		}
++		if (!end) {
++			break;
++		}
++		t = end + 1;
 +	}
 +	return 0;
 +}
@@ -794,6 +807,11 @@ index 0000000..62c63d6
 +	}
 +
 +	uint32_t sample = 0;
++	if (!PE_parse_boot_argn("sweet_sample_names", sweet_sample_names,
++	    sizeof(sweet_sample_names))) {
++		strlcpy(sweet_sample_names, "SpringBoard",
++		    sizeof(sweet_sample_names));
++	}
 +	PE_parse_boot_argn("sweet_sample", &sample, sizeof(sample));
 +	if (sample && sweet_sample_left == 0) {
 +		sweet_sample_ticks = (int)sample * hz;
