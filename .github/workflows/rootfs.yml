@@ -7,6 +7,14 @@ on:
         description: 'Upload the ~6 GB rootfs image artifact (storage quota!)'
         type: boolean
         default: false
+      secs:
+        description: 'QEMU run length in seconds'
+        type: string
+        default: '1800'
+      snap_every:
+        description: 'Framebuffer snapshot interval in seconds'
+        type: string
+        default: '120'
 
 permissions:
   contents: read
@@ -149,9 +157,9 @@ jobs:
       - name: QEMU smoke test
         run: |
           python3 tools/mkpayload.py kernel/kernel.development.sweet "$BIG"/sweet-qemu.adt \
-            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 sweetvio_test=1 sweetfb_noconsole=1 sweetproc_dump=120 sweet_exit_trace=1 sweet_sample=180 sweet_sample_names=SpringBoard,lsd,backboardd -enable_kprintf_spam -noprogress wdt=-1"
+            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 sweetvio_test=1 sweetfb_noconsole=1 sweetproc_dump=600 sweet_exit_trace=1 sweet_sample=600 sweet_sample_names=SpringBoard,lsd -enable_kprintf_spam -noprogress wdt=-1"
           sudo env PATH="$PATH" python3 tools/qemu-sweet.py "$BIG"/payload.bin qemu-out \
-            --secs 600 --snap-every 60 --kernel kernel/kernel.development.sweet --disk "$BIG"/rootfs.img \
+            --secs "${{ inputs.secs }}" --snap-every "${{ inputs.snap_every }}" --kernel kernel/kernel.development.sweet --disk "$BIG"/rootfs.img \
             --dump-symbol sweet_log_ring:0x400000 --dump-symbol sweet_log_total:8 \
             --fail-on-panic
           sha256sum qemu-out/fb-*.png | awk '{print substr($1,1,12), $2}' || true
@@ -193,26 +201,35 @@ jobs:
         run: |
           [ -f sweetlog.txt ] || exit 0
           python3 - <<'EOF' > sample-addrs.txt
-          import re
-          addrs, seen, slide = [], set(), None
+          import re, sys
+          procs, slide = {}, None
           for line in open('sweetlog.txt', encoding='utf-8', errors='replace'):
-              m = re.search(r'SMP \S+\[\d+\] slide (0x[0-9a-f]+)', line)
+              m = re.search(r'SMP (\S+)\[\d+\] slide (0x[0-9a-f]+)', line)
               if m:
-                  slide = int(m.group(1), 16)
+                  slide = int(m.group(2), 16)
+                  procs.setdefault(m.group(1), [])
                   continue
-              if slide is None or not re.match(r'SMP \S+ t\d+ ', line):
+              if slide is None:
                   continue
+              m = re.match(r'SMP (\S+) t\d+ ', line)
+              if not m:
+                  continue
+              lst = procs.setdefault(m.group(1), [])
               for tok in re.findall(r'(?:pc|lr) (0x[0-9a-f]+)', line):
-                  addrs.append(int(tok, 16) - slide)
+                  lst.append(int(tok, 16) - slide)
               b = line.find(' bt ')
               if b >= 0:
                   for tok in re.findall(r'0x[0-9a-f]{6,}', line[b:]):
-                      addrs.append(int(tok, 16) - slide)
-          out = [a for a in addrs if 0x180000000 <= a < 0x280000000 and not (a in seen or seen.add(a))]
-          for a in out[:32]:
+                      lst.append(int(tok, 16) - slide)
+          out, seen = [], set()
+          for name in ('SpringBoard', 'lsd'):
+              for a in procs.get(name, []):
+                  if 0x180000000 <= a < 0x280000000 and a not in seen:
+                      seen.add(a)
+                      out.append(a)
+          for a in out[:40]:
               print(hex(a))
-          import sys
-          print('addresses:', len(out), file=sys.stderr)
+          print('per process:', {k: len(v) for k, v in procs.items()}, 'unique:', len(out), file=sys.stderr)
           EOF
           if [ ! -s sample-addrs.txt ]; then echo "no sample addresses"; exit 0; fi
           sudo mkdir -p /mnt/dsc
@@ -251,6 +268,12 @@ jobs:
         run: |
           sudo mkdir -p /mnt/post
           sudo mount -o ro,loop "$BIG"/rootfs.img /mnt/post || exit 0
+          echo "--- LaunchServices state in the image ---"
+          for d in /mnt/post/private/var/db/lsd \
+                   /mnt/post/private/var/mobile/Library/Preferences/com.apple.MobileCoreServices; do
+            echo "## $d"; sudo ls -la "$d" 2>&1 | head -20 || true
+          done
+          sudo find /mnt/post/private/var/db/lsd -maxdepth 2 -type f -printf '%s %p\n' 2>/dev/null | head -20 || true
           echo "--- crash report dirs ---"
           for d in /mnt/post/private/var/mobile/Library/Logs/CrashReporter \
                    /mnt/post/private/var/log/CrashReporter \
