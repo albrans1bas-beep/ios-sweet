@@ -158,7 +158,7 @@ jobs:
         run: |
           mkdir -p stage-logs
           cp qemu-out/fb.png qemu-out/fb.txt qemu-out/qemu.log qemu-out/regs.txt \
-            qemu-out/result.json stage-logs/ 2>/dev/null || true
+            qemu-out/result.json qemu-out/serial.txt stage-logs/ 2>/dev/null || true
           cp "$BIG"/payload.bin "$BIG"/sweet-qemu.adt stage-logs/ 2>/dev/null || true
           gzip -1 "$BIG"/rootfs.img 2>/dev/null || true
           ls -la "$BIG"/rootfs.img.gz stage-logs
