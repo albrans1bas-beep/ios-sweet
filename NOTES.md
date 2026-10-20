@@ -2,7 +2,52 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-10-20 - SPRINGBOARD DRAWS THE APPLE BOOT SCREEN; virtio self-test clean; no HFS corruption in run 39399391323 <<<
+
+**Commits:** `4d13023` (0082: data-desc direction flags per request - WRITE
+only on device-readable-in data descriptors; `sweetvio_test` boot-arg
+self-test; smoke cmdline adds `sweetvio_test=1 sweetfb_noconsole=1`),
+`70d6050` (harness: qemu-sweet no longer fails on undecodable GUI frames;
+workflow gates on `status != panic` + sweetlog milestones instead of fb.txt
+text). Kernel build 39398799696 green; rootfs run 39399391323 (commit
+4d13023), rerun 39404258481 (commit 70d6050).
+
+**Run 39399391323 findings (sweetlog.txt 1989 lines, rootfs-logs11/):**
+- `SWEET VIO TEST: level 1: 20 checks, 0 failures` - 5 offsets (1 MiB,
+  32 MiB, 2 GiB, capacity/2, capacity-256 sectors) x 4 chunk sizes
+  (512/4096/8192/16384 B), whole-vs-pieces reads identical. Block-read
+  path clean at init.
+- **No `hfs_swap_BTNode` / `BlockMarkFreeInternal` lines at all.** Every
+  journaled run and the earlier unjournaled run had catalog corruption;
+  the write-desc direction fix is the prime suspect (data desc had
+  `VRING_DESC_F_WRITE` on write requests - spec violation). Not "fixed"
+  until 1-2 more clean runs.
+- Boot reached full 300 s: hfs mounted, launchd stages, SpringBoard exec
+  (line 682), daemons incl. fairplayd.H2/bluetoothd/medialibraryd exec.
+- **fb.png = the real iOS boot screen (white Apple logo on black,
+  1125x2436)** - first user-visible Apple UI pixels from real userland.
+  `sweetfb_noconsole=1` works: console stops drawing once the GUI
+  presents; all boot text comes from the sweetlog ring now.
+- Exit 3 in that run was only the fb-text decoder counting GUI pixels as
+  unknown glyphs (`incomplete_decode`); boot was fine. Fixed in 70d6050.
+
+**fsck-after on that run reports metadata inconsistency** (hard link
+count, volume bitmap orphaned/under-allocated blocks, file/dir/free-block
+counts, volume header). Expected after SIGKILLing QEMU on an **unjournaled**
+volume - boot writes are not flushed. Decide: re-enable the journal
+(`-j` in mkiosroot) now that the corruption suspect changed, and/or add a
+graceful QMP shutdown + sync before kill. fsck-after is informational
+(not a gate).
+
+**Next moves:** (1) confirm run 39404258481 passes the new gates;
+(2) 1-2 more runs to confirm corruption is gone; if yes re-enable the HFS
+journal and re-verify; (3) sweetvio_test=2 on a scratch disk for write
+path; (4) screenshots of SpringBoard past the logo (lock screen depends on
+remaining daemons); (5) PHASES P1: 0084 ramfb/AppleCLCD, 0085 virtio-input,
+0086 virtio-net.
+
 ### >>> UPDATE 2026-10-19 (night 2) - QEMU iOS USERLAND BOOTS: daemons run, CI green gate fixed <<<
+
 
 **CI run 39338180589 (commit e6148c0): 300 s smoke with `no_panic_observed`,
 real iOS daemons executing.** Two bugs fixed on the way:
