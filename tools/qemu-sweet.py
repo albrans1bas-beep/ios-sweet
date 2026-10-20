@@ -30,7 +30,7 @@ BOOT_LINE_LENGTH = 608
 
 
 def build_image(payload):
-    """Return (phys_base, ram_image, boot_args_pa, entry_pa)."""
+    """Return (phys_base, ram_image, boot_args_pa, entry_pa, virt_base)."""
     magic, ver, nsegs = struct.unpack_from('<8sII', payload, 0)
     assert magic == b'SWEETXNU' and ver == 1, 'not a SWEETXNU v1 payload'
     virt_base, entry_va, adt_off, adt_size, kernel_end, phys_base, mem_size = \
@@ -51,7 +51,7 @@ def build_image(payload):
     ba += cmdline + b'\0' * 4 + struct.pack('<QQ', 0, mem_size)
     assert len(ba) == 736
     img[ba_pa - phys_base:ba_pa - phys_base + len(ba)] = ba
-    return phys_base, bytes(img), ba_pa, entry_va + delta
+    return phys_base, bytes(img), ba_pa, entry_va + delta, virt_base
 
 
 def stub(ba_pa, entry_pa):
@@ -116,7 +116,7 @@ def screen_result(screen, unknown):
     return {'status': status, 'unknown_glyphs': unknown, 'snapshot_only': True}
 
 
-def qmp(sock_path, *cmds, pmemsave=None):
+def qmp(sock_path, *cmds, pmemsaves=()):
     """Run QEMU human-monitor commands over QMP (synchronous, unlike the echoing HMP socket).
 
     POSIX: unix:... socket at sock_path. Windows has no AF_UNIX bridging in all
@@ -145,10 +145,10 @@ def qmp(sock_path, *cmds, pmemsave=None):
         if 'error' in r:
             print(f'qmp {c!r}: {r["error"]}', file=sys.stderr)
         out.append(r.get('return', ''))
-    if pmemsave:	# native QMP: HMP's argument parser chokes on '-' in paths
-        r = call('pmemsave', val=pmemsave[0], size=pmemsave[1], filename=pmemsave[2])
+    for addr, size, filename in pmemsaves:	# native QMP: HMP's argument parser chokes on '-' in paths
+        r = call('pmemsave', val=addr, size=size, filename=filename)
         if 'error' in r:
-            print(f'qmp pmemsave: {r["error"]}', file=sys.stderr)
+            print(f'qmp pmemsave {filename}: {r["error"]}', file=sys.stderr)
     s.close()
     return out
 
@@ -162,24 +162,42 @@ def main():
     ap.add_argument('--cpu', default='cortex-a76')	# ARMv8.2 like Kryo 470, same ID_AA64MMFR0
     ap.add_argument('--kernel', help='matching unstripped kernel, for exact framebuffer text decoding (uses llvm-nm)')
     ap.add_argument('--disk', help='raw disk image appended as virtio-blk on the first virtio-mmio transport (0x0a000000, kernel 0082+)')
+    ap.add_argument('--dump-symbol', action='append', default=[], metavar='NAME:SIZE',
+                    help='at snapshot time pmemsave the kernel global NAME (SIZE bytes, 0x.. ok) to OUTDIR/NAME.bin; repeatable, requires --kernel')
     ap.add_argument('--fail-on-panic', action='store_true', help='exit 2 for a visible panic, 3 for incomplete/blank decoding; requires --kernel')
     a = ap.parse_args()
     if a.fail_on_panic and not a.kernel:
         ap.error('--fail-on-panic requires --kernel')
+    if a.dump_symbol and not a.kernel:
+        ap.error('--dump-symbol requires --kernel')
     payload = open(a.payload, 'rb').read()
     font = None
+    symbols = {}
     if a.kernel:
-        symbols = subprocess.check_output(['llvm-nm', '--defined-only', a.kernel], text=True)
-        fonts = [int(line.split()[0], 16) for line in symbols.splitlines()
-                 if line.split()[-1:] == ['_iso_font']]
+        nm = subprocess.check_output(['llvm-nm', '--defined-only', a.kernel], text=True)
+        for line in nm.splitlines():
+            parts = line.split()
+            if len(parts) >= 3:
+                symbols[parts[-1]] = int(parts[0], 16)
+        fonts = [va for name, va in symbols.items() if name == '_iso_font']
         if len(fonts) != 1:
             ap.error('kernel must contain exactly one _iso_font symbol')
         font = payload_data(payload, fonts[0], 256 * 16)
+    dumps = []
+    for spec in a.dump_symbol:
+        name, _, size = spec.rpartition(':')
+        if not name or not size:
+            ap.error(f'--dump-symbol expects NAME:SIZE, got {spec!r}')
+        if name not in symbols:
+            name = '_' + name
+        if name not in symbols:
+            ap.error(f'symbol {spec!r} not in the kernel')
+        dumps.append((name, symbols[name], int(size, 0)))
     os.makedirs(a.outdir, exist_ok=True)
     out = os.path.abspath(a.outdir)
     q_out = out.replace('\\', '/')	# QEMU chardev paths: forward slashes on Windows
 
-    phys_base, img, ba_pa, entry_pa = build_image(payload)
+    phys_base, img, ba_pa, entry_pa, virt_base = build_image(payload)
     open(f'{out}/ram.bin', 'wb').write(img)
     open(f'{out}/stub.bin', 'wb').write(stub(ba_pa, entry_pa))
     print(f'phys_base={phys_base:#x} boot_args={ba_pa:#x} entry={entry_pa:#x}', file=sys.stderr)
@@ -223,7 +241,10 @@ def main():
         time.sleep(0.2)
     result = {'status': 'qemu_exited', 'qemu_returncode': p.returncode}
     if p.poll() is None:
-        _, regs, *extra = qmp(mon, 'stop', 'info registers', *a.hmp, pmemsave=(FB_BASE, FB_STRIDE * FB_H, f'{out}/fb.raw'))
+        saves = [(FB_BASE, FB_STRIDE * FB_H, f'{out}/fb.raw')]
+        saves += [(va + phys_base - virt_base, size, f'{out}/{name}.bin')
+                  for name, va, size in dumps]
+        _, regs, *extra = qmp(mon, 'stop', 'info registers', *a.hmp, pmemsaves=saves)
         open(f'{out}/regs.txt', 'w').write(regs + ''.join(f'\n(qemu) {c}\n{r}' for c, r in zip(a.hmp, extra)))
         p.kill()
         p.wait()
