@@ -1,5 +1,5 @@
 diff --git a/bsd/kern/kern_exit.c b/bsd/kern/kern_exit.c
-index fde499c..f4e5396 100644
+index fde499c..578561f 100644
 --- a/bsd/kern/kern_exit.c
 +++ b/bsd/kern/kern_exit.c
 @@ -75,6 +75,7 @@
@@ -18,10 +18,10 @@ index fde499c..f4e5396 100644
 +		static int sweet_exit_trace = -1;
 +
 +		if (sweet_exit_trace < 0) {
-+			char tbuf[8];
++			uint32_t trace = 0;
 +
-+			sweet_exit_trace = PE_parse_boot_argn("sweet_exit_trace", tbuf,
-+			    sizeof(tbuf)) && tbuf[0] == '1';
++			PE_parse_boot_argn("sweet_exit_trace", &trace, sizeof(trace));
++			sweet_exit_trace = (trace == 1);
 +		}
 +		if (sweet_exit_trace) {
 +			printf("SWEET EXIT: pid %d ppid %d comm %s rv 0x%x code %d sig %d\n",
