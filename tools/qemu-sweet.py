@@ -265,8 +265,6 @@ def main():
     print(f'{out}/fb.png  {out}/regs.txt  {out}/qemu.log', file=sys.stderr)
     if a.fail_on_panic and result['status'] == 'panic':
         return 2
-    if a.fail_on_panic and result['status'] in ('incomplete_decode', 'blank_screen'):
-        return 3
     if result['status'] == 'qemu_exited':
         return 1
 

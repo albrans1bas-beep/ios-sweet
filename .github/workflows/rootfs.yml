@@ -152,7 +152,12 @@ jobs:
             --dump-symbol sweet_log_ring:0x400000 --dump-symbol sweet_log_total:8 \
             --fail-on-panic
           grep -E 'exec launchd|exec xpcproxy|panic' qemu-out/fb.txt || true
-          grep -q '"no_panic_observed"' qemu-out/result.json
+          if grep -q '"status": "panic"' qemu-out/result.json; then
+            echo "panic observed"; exit 1
+          fi
+          python3 tools/sweetlog-extract.py qemu-out/sweet_log_ring.bin qemu-out/sweet_log_total.bin sweetlog.txt
+          grep -E 'SWEET VIO TEST: level 1: [0-9]+ checks, 0 failures' sweetlog.txt
+          grep -q 'exec SpringBoard' sweetlog.txt
 
       - name: fsck after boot
         if: always()
