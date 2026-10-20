@@ -2,6 +2,61 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-10-20 (later) - stdio redirect caused the "SpringBoard respawn loop"; SpringBoard is alive but parked; QEMU sampler runs; CI symbolication added <<<
+
+**Commits:** `9772f48` (0083 exit trace; stdio_to_console reverted),
+`9b96537` (print SWEET EXIT counts + fsck tail), `1cdec87` (0083 parse as
+uint32 - PE_parse_boot_argn parses numbers, not strings), `2ed9575`
+(embed gzip+b64 sweetlog/fb.txt in the job log; artifacts are quota-blocked),
+`c6940c9` (QEMU SpringBoard sampler in 0082; drop fairplayd.H2/bluetoothd
+launchd jobs; ignore xnu/src-tree and rootfs-logs*), `3956c8e` (sampler
+delegates to `sweet_sample_task`), `587ac3b` (CI symbolication step).
+Kernel runs 39435792994 / 39444370519 / 39451279311 green; rootfs runs
+39436736803 / 39440290056 / 39445064425 / 39452551587 green; symbolication
+run 39459395879.
+
+**Findings:**
+- The apparent SpringBoard/backboardd crash loop was the launchd
+  StandardOut/ErrorPath=/dev/console redirect (NOTES 318). With it removed
+  SpringBoard (pid 27) and backboardd (pid 57) are stable across all dumps.
+- `SWEET EXIT` trace (0083, `sweet_exit_trace=1`) shows only clean exits:
+  bluetoothd/fairplayd.H2 `exit(0)` relaunch loops (hardware absent; jobs now
+  dropped), plus 1-2 watchdogd/mount/xpcroleaccountd. **SpringBoard never
+  exits and never crashes**; it is alive and parked. FB stays on the Apple
+  logo (hash 71a1fb6fd77d) from 120 s to 600 s.
+- The 0054 process sampler never runs in QEMU: `sweet_sample_start()` is
+  only called from the phone UFS driver. 0082's virtio driver now starts a
+  timer (`sweet_sample=SECS`, 3 samples) and calls the existing
+  `sweet_sample_task()` from exception.c, so each hit prints
+  `SMP SpringBoard[pid] slide 0x.. mh 0x..` + per-thread pc/lr/sp/bt.
+- Samples at ~180/360/540 s (run 39452551587): pid 27, slide 0x1dfdc000,
+  mh 0x102e20000, only 4-5 threads; pc/lr/bt identical across samples, i.e.
+  all threads are parked, not spinning in app code.
+- Local symbolication attempt: `research/ipsw-d64` is iOS **18.2**
+  (22C152, iPhone14,3), not the guest's 16.7.2/20H392 (iPhone10,3), so its
+  image table is wrong for the guest (HealthPlatform/MusicKit soup).
+  7-Zip 24.07/25.01 can read the APFS DMG and extract the .NN subcaches,
+  but not `dyld_shared_cache_arm64e.symbols`, `.34.dyldlinkedit`,
+  `.64.dyldlinkedit` (APFS clones; 0 bytes). Windows ipsw needs those, so
+  no local symbolication.
+- CI symbolication (587ac3b): the rootfs job keeps ipswbin, mounts
+  `rootfs.img` after QEMU (fsck -fy first), parses `SMP SpringBoard` lines,
+  subtracts the slide, and runs `ipsw dyld a2s <mounted cache> <addr>
+  --cache $BIG/dsc.a2s -d` for up to 64 unique frames. The smoke-test log
+  now also prints the SMP lines directly (`SMP (SpringBoard|backboardd)`).
+- The b64 sweetlog embed works: run 39452551587 decoded to 168 KB /
+  2459 lines; exit trace and console were much quieter after dropping the
+  two looping jobs. The artifact quota is still in effect - keep using the
+  b64/printed-log path.
+- Git: `.gitignore` now has `xnu/src-tree/` and `rootfs-logs*/`; a stray
+  `git add -A` once staged the whole src-tree and timed out (index.lock
+  had to be removed). Never use `git add -A` in this repo.
+
+**Next:** read the symbolicated frames from run 39459395879. If the names
+still look impossible, add the sampled thread state (`th->state`) and/or
+sample backboardd to validate the slide; otherwise follow the blocking
+function (expect a mach_msg/dispatch wait on a service that never answers).
+
 ### >>> UPDATE 2026-10-20 - SPRINGBOARD DRAWS THE APPLE BOOT SCREEN; virtio self-test clean; no HFS corruption in run 39399391323 <<<
 
 **Commits:** `4d13023` (0082: data-desc direction flags per request - WRITE
