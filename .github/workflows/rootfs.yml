@@ -153,9 +153,10 @@ jobs:
           python3 tools/mkpayload.py kernel/kernel.development.sweet "$BIG"/sweet-qemu.adt \
             "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 sweetvio_test=1 sweetfb_noconsole=1 -enable_kprintf_spam -noprogress wdt=-1"
           sudo env PATH="$PATH" python3 tools/qemu-sweet.py "$BIG"/payload.bin qemu-out \
-            --secs 300 --kernel kernel/kernel.development.sweet --disk "$BIG"/rootfs.img \
+            --secs 600 --snap-every 60 --kernel kernel/kernel.development.sweet --disk "$BIG"/rootfs.img \
             --dump-symbol sweet_log_ring:0x400000 --dump-symbol sweet_log_total:8 \
             --fail-on-panic
+          sha256sum qemu-out/fb-*.png | awk '{print substr($1,1,12), $2}' || true
           grep -E 'exec launchd|exec xpcproxy|panic' qemu-out/fb.txt || true
           if grep -q '"status": "panic"' qemu-out/result.json; then
             echo "panic observed"; exit 1
@@ -179,6 +180,7 @@ jobs:
           cp qemu-out/fb.png qemu-out/fb.txt qemu-out/qemu.log qemu-out/regs.txt \
             qemu-out/result.json qemu-out/serial.txt \
             qemu-out/sweet_log_ring.bin qemu-out/sweet_log_total.bin stage-logs/ 2>/dev/null || true
+          cp qemu-out/fb-???.png stage-logs/ 2>/dev/null || true
           python3 tools/sweetlog-extract.py qemu-out/sweet_log_ring.bin qemu-out/sweet_log_total.bin \
             stage-logs/sweetlog.txt 2>/dev/null || true
           cp fsck-after.txt stage-logs/ 2>/dev/null || true

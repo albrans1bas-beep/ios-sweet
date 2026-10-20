@@ -165,6 +165,8 @@ def main():
     ap.add_argument('--dump-symbol', action='append', default=[], metavar='NAME:SIZE',
                     help='at snapshot time pmemsave the kernel global NAME (SIZE bytes, 0x.. ok) to OUTDIR/NAME.bin; repeatable, requires --kernel')
     ap.add_argument('--fail-on-panic', action='store_true', help='exit 2 for a visible panic, 3 for incomplete/blank decoding; requires --kernel')
+ap.add_argument('--snap-every', type=float, default=0, metavar='SECS',
+                help='save fb-NNNs.png every SECS seconds of guest time (0 = only the final one)')
     a = ap.parse_args()
     if a.fail_on_panic and not a.kernel:
         ap.error('--fail-on-panic requires --kernel')
@@ -237,8 +239,20 @@ def main():
         p.wait()
         return
     t0 = time.time()
+    next_snap = a.snap_every if a.snap_every > 0 else None
     while p.poll() is None and time.time() - t0 < a.secs:
         time.sleep(0.2)
+        if next_snap is not None and time.time() - t0 >= next_snap:
+            buf = f'{out}/fb-snap.raw'
+            try:
+                qmp(mon, 'stop', pmemsaves=[(FB_BASE, FB_STRIDE * FB_H, buf)])
+                qmp(mon, 'cont')
+                write_png(f'{out}/fb-{int(next_snap):03d}s.png', open(buf, 'rb').read())
+                print(f'snapshot fb-{int(next_snap):03d}s.png', file=sys.stderr)
+                os.unlink(buf)
+            except OSError as e:
+                print(f'snapshot failed: {e}', file=sys.stderr)
+            next_snap += a.snap_every
     result = {'status': 'qemu_exited', 'qemu_returncode': p.returncode}
     if p.poll() is None:
         saves = [(FB_BASE, FB_STRIDE * FB_H, f'{out}/fb.raw')]
