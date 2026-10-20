@@ -209,7 +209,7 @@ jobs:
                   for tok in re.findall(r'0x[0-9a-f]{6,}', line[b:]):
                       addrs.append(int(tok, 16) - slide)
           out = [a for a in addrs if 0x180000000 <= a < 0x280000000 and not (a in seen or seen.add(a))]
-          for a in out[:64]:
+          for a in out[:16]:
               print(hex(a))
           import sys
           print('addresses:', len(out), file=sys.stderr)
@@ -220,7 +220,8 @@ jobs:
           sudo mount -o loop,force "$BIG"/rootfs.img /mnt/dsc || exit 0
           trap 'sudo umount /mnt/dsc' EXIT
           CDIR=/mnt/dsc/System/Library/Caches/com.apple.dyld
-          echo "--- cache dir ---"; sudo ls -la "$CDIR" | head -12 || true
+          echo "--- cache dir ---"; sudo ls -la "$CDIR" | head -25 || true
+          sudo ls -la "$CDIR" | grep -i symbols || echo "NO .symbols subcache"
           DSC="$CDIR/dyld_shared_cache_arm64"
           if [ ! -f "$DSC" ]; then
             DSC=$(sudo find /mnt/dsc -name 'dyld_shared_cache_arm64' -type f | head -1)
@@ -228,10 +229,16 @@ jobs:
           if [ -z "$DSC" ] || [ ! -f "$DSC" ]; then echo "no dyld cache"; exit 0; fi
           echo "using $DSC"
           echo "--- symbolicated SpringBoard sample frames ---"
-          while read -r u; do
+          first=$(head -1 sample-addrs.txt)
+          echo "== $first (verbose)"
+          set +e
+          "$BIG"/ipswbin dyld a2s "$DSC" "$first" -d
+          echo "exit $?"
+          set -e
+          tail -n +2 sample-addrs.txt | while read -r u; do
             echo "== $u"
-            "$BIG"/ipswbin dyld a2s "$DSC" "$u" --cache "$BIG"/dsc.a2s -d 2>/dev/null | head -2 || true
-          done < sample-addrs.txt
+            timeout 90 "$BIG"/ipswbin dyld a2s "$DSC" "$u" -d 2>&1 | head -2 || true
+          done
 
       - name: fsck after boot
         if: always()
