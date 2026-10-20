@@ -135,6 +135,47 @@ else
 	echo "no lsd plist at $lsd_plist; candidates:"
 	sudo find "$work/root" -name '*lsd*.plist' | head
 fi
+# launchd takes its job set from the compiled cache, not the LaunchDaemons
+# plists (launchd_cache_loader -> /System/Library/xpc/launchd.plist,
+# "Using unsecure cache"). Mark lsd as a boot job there too, otherwise the
+# per-daemon edit above is never read.
+launchd_cache="$work/root/System/Library/xpc/launchd.plist"
+if sudo test -f "$launchd_cache"; then
+	sudo python3 - "$launchd_cache" <<'PY'
+import plistlib, sys
+
+def find(o):
+	if isinstance(o, dict):
+		if o.get('Label') == 'com.apple.lsd':
+			return o
+		for v in o.values():
+			r = find(v)
+			if r is not None:
+				return r
+	elif isinstance(o, list):
+		for v in o:
+			r = find(v)
+			if r is not None:
+				return r
+	return None
+
+p = sys.argv[1]
+with open(p, 'rb') as f:
+	d = plistlib.load(f)
+j = find(d)
+if j is None:
+	print('no com.apple.lsd job in compiled launchd cache')
+	sys.exit(0)
+print('compiled lsd job before:', j)
+j['RunAtLoad'] = True
+with open(p, 'wb') as f:
+	plistlib.dump(d, f, fmt=plistlib.FMT_BINARY)
+print('compiled lsd job after:', j)
+PY
+else
+	echo "no compiled launchd cache at $launchd_cache"
+fi
+
 sudo find "$work/root/private/var/db" -maxdepth 2 -iname '*launchd*' -print 2>/dev/null || true
 sudo rm -rf "$work/root/private/var/db/com.apple.xpc.launchd" \
 	"$work/root/private/var/db/launchd.db"
