@@ -12,10 +12,10 @@ index 6630131..207f6b4 100644
  bsd/dev/sweet_touch.c			standard
 diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
 new file mode 100644
-index 0000000..c6c07ea
+index 0000000..e46c504
 --- /dev/null
 +++ b/bsd/dev/sweet_virtio.c
-@@ -0,0 +1,737 @@
+@@ -0,0 +1,771 @@
 +/*
 + * SWEET virtio (QEMU virt board): virtio-mmio transport + virtio-blk disk.
 + *
@@ -41,7 +41,9 @@ index 0000000..c6c07ea
 +#include <sys/conf.h>
 +#include <sys/disk.h>
 +#include <sys/errno.h>
++#include <sys/kernel.h>
 +#include <sys/proc.h>
++#include <sys/proc_internal.h>
 +#include <sys/uio.h>
 +#include <miscfs/devfs/devfs.h>
 +#include <kern/locks.h>
@@ -423,6 +425,30 @@ index 0000000..c6c07ea
 +	return 0;
 +}
 +
++/* boot-arg sweetproc_dump=SECS: six times, every SECS, print every live
++ * process (ppid pid state comm) into the console ring. Debug aid for stalled
++ * userland bring-up; read the sweet_log_ring dump. */
++static int sweet_proc_ticks;
++static int sweet_proc_left;
++
++static int
++sweet_proc_print(proc_t p, void *arg)
++{
++	printf("SWEET PROC: ppid %d pid %d stat %d comm %s\n",
++	    p->p_ppid, p->p_pid, p->p_stat, p->p_comm);
++	return 0;
++}
++
++static void
++sweet_proc_timer(void *arg)
++{
++	printf("SWEET PROC DUMP: %d to go\n", sweet_proc_left);
++	proc_iterate(PROC_ALLPROCLIST, sweet_proc_print, NULL, NULL, NULL);
++	if (--sweet_proc_left > 0) {
++		timeout(sweet_proc_timer, NULL, sweet_proc_ticks);
++	}
++}
++
 +/* boot-arg sweetvio_test: verify the block layer in place.
 + * =1 read-only cross-checks (safe on a live root disk): read the same bytes
 + * whole and again in 512/4096/8192/16384-byte pieces, compare.
@@ -718,6 +744,14 @@ index 0000000..c6c07ea
 +	PE_parse_boot_argn("sweetvio_test", &test, sizeof(test));
 +	if (test >= 1 && test <= 2) {
 +		sweet_vio_self_test(test);
++	}
++
++	uint32_t pdump = 0;
++	PE_parse_boot_argn("sweetproc_dump", &pdump, sizeof(pdump));
++	if (pdump && sweet_proc_left == 0) {
++		sweet_proc_ticks = (int)pdump * hz;
++		sweet_proc_left = 6;
++		timeout(sweet_proc_timer, NULL, sweet_proc_ticks);
 +	}
 +
 +	sv.bmajor = bdevsw_add(-1, &sweet_vio_bdevsw);

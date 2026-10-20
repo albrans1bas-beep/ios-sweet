@@ -151,7 +151,7 @@ jobs:
       - name: QEMU smoke test
         run: |
           python3 tools/mkpayload.py kernel/kernel.development.sweet "$BIG"/sweet-qemu.adt \
-            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 sweetvio_test=1 sweetfb_noconsole=1 -enable_kprintf_spam -noprogress wdt=-1"
+            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 sweetvio_test=1 sweetfb_noconsole=1 sweetproc_dump=120 -enable_kprintf_spam -noprogress wdt=-1"
           sudo env PATH="$PATH" python3 tools/qemu-sweet.py "$BIG"/payload.bin qemu-out \
             --secs 600 --snap-every 60 --kernel kernel/kernel.development.sweet --disk "$BIG"/rootfs.img \
             --dump-symbol sweet_log_ring:0x400000 --dump-symbol sweet_log_total:8 \
