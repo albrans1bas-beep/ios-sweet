@@ -135,13 +135,11 @@ jobs:
           rm -rf "$BIG"/dmgs
           df -h "$BIG"
 
-      - name: Fetch the latest kernel artifact
+      - name: Fetch the latest kernel from the rolling release
         run: |
-          RUN_ID=$(gh run list -w xnu.yml -b main --limit 30 --json conclusion,databaseId \
-            --jq '[.[] | select(.conclusion == "success")][0].databaseId')
-          echo "using xnu run $RUN_ID"
-          gh run download "$RUN_ID" -n xnu-kernel -D kernel
-          ls kernel
+          mkdir -p kernel
+          gh release download kernel-latest -D kernel --pattern 'kernel.development.sweet' --clobber
+          ls -la kernel
         env:
           GH_TOKEN: ${{ github.token }}
 
