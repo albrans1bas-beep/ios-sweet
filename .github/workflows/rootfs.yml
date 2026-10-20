@@ -163,6 +163,7 @@ jobs:
           python3 tools/sweetlog-extract.py qemu-out/sweet_log_ring.bin qemu-out/sweet_log_total.bin sweetlog.txt
           grep -E 'SWEET VIO TEST: level 1: [0-9]+ checks, 0 failures' sweetlog.txt
           grep -q 'exec SpringBoard' sweetlog.txt
+          echo "hfs corruption lines: $(grep -c 'hfs_swap_BTNode\|BlockMarkFreeInternal' sweetlog.txt || true)"
 
       - name: fsck after boot
         if: always()
