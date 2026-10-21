@@ -157,7 +157,7 @@ jobs:
       - name: QEMU smoke test
         run: |
           python3 tools/mkpayload.py kernel/kernel.development.sweet "$BIG"/sweet-qemu.adt \
-            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 sweetvio_test=1 sweetfb_noconsole=1 sweetproc_dump=600 sweet_exit_trace=1 sweet_sample=240 sweet_sample_names=usermanagerd,launchd,lsd sweet_nosync=1 -enable_kprintf_spam -noprogress wdt=-1"
+            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 sweetvio_test=1 sweetfb_noconsole=1 sweetproc_dump=600 sweet_exit_trace=1 sweet_sample=240 sweet_sample_names=containermanager,cfprefsd,backboardd,lsd sweet_nosync=1 -enable_kprintf_spam -noprogress wdt=-1"
           sudo env PATH="$PATH" python3 tools/qemu-sweet.py "$BIG"/payload.bin qemu-out \
             --secs "${{ inputs.secs }}" --snap-every "${{ inputs.snap_every }}" --kernel kernel/kernel.development.sweet --disk "$BIG"/rootfs.img \
             --dump-symbol sweet_log_ring:0x400000 --dump-symbol sweet_log_total:8 \
@@ -198,6 +198,8 @@ jobs:
           grep -a 'SWEET EXIT:' sweetlog.txt | tail -80 || true
           echo "--- exits by process ---"
           grep -a 'SWEET EXIT:' sweetlog.txt | awk '{print $8}' | sort | uniq -c | sort -rn | head -20 || true
+          echo "--- host priv trace ---"
+          grep -a 'SWEET SECTOK:\|SWEET MULTIUSER:' sweetlog.txt | head -40 || true
 
       - name: Symbolicate SpringBoard samples
         if: always()
@@ -225,12 +227,12 @@ jobs:
                   for tok in re.findall(r'0x[0-9a-f]{6,}', line[b:]):
                       lst.append(int(tok, 16) - slide)
           out, seen = [], set()
-          for name in ('usermanagerd', 'launchd', 'lsd'):
+          for name in ('containermanager', 'cfprefsd', 'backboardd', 'lsd'):
               for a in procs.get(name, []):
                   if 0x180000000 <= a < 0x280000000 and a not in seen:
                       seen.add(a)
                       out.append(a)
-          for a in out[:150]:
+          for a in out[:170]:
               print(hex(a))
           print('per process:', {k: len(v) for k, v in procs.items()}, 'unique:', len(out), file=sys.stderr)
           EOF
@@ -277,21 +279,43 @@ jobs:
             echo "## $d"; sudo ls -la "$d" 2>&1 | head -20 || true
           done
           sudo find /mnt/post/private/var/db/lsd -maxdepth 2 -type f -printf '%s %p\n' 2>/dev/null | head -20 || true
+          echo "--- launchd usersession strings ---"
+          sudo strings -a /mnt/post/sbin/launchd 2>/dev/null | grep -iE 'usersession|user_session|libinfo|multiuser|foreground|vproc|trap|session' | head -80 || true
+          echo "--- introspection tools ---"
+          for f in /mnt/post/bin/sh /mnt/post/bin/launchctl /mnt/post/usr/bin/launchctl /mnt/post/usr/bin/sample /mnt/post/usr/bin/log; do printf '%s: ' $f; sudo test -x $f && echo yes || echo no; done
+          echo "--- entitlements ---"
+          for b in /mnt/post/sbin/launchd /mnt/post/usr/libexec/usermanagerd /mnt/post/usr/libexec/lsd; do
+            echo "## $b"
+            [ -f "$b" ] && timeout 120 "$BIG"/ipswbin macho info -e "$b" 2>&1 | head -120 || echo "missing"
+          done
+          echo "--- imported symbols of interest ---"
+          for b in /mnt/post/usr/libexec/usermanagerd /mnt/post/sbin/launchd; do
+            echo "## $b"
+            [ -f "$b" ] && timeout 120 "$BIG"/ipswbin macho info -n "$b" 2>/dev/null | grep -iE 'host_set|multiuser|vproc|usersession|foreground|nextsession' | head -60 || echo "missing"
+          done
           echo "--- usermanagerd strings ---"
-          sudo strings -a /mnt/post/usr/libexec/usermanagerd 2>/dev/null | grep -iE 'foreground|usersession|multiuser|libinfo|launchd' | head -40 || true
+          sudo strings -a /mnt/post/usr/libexec/usermanagerd 2>/dev/null | grep -iE 'foreground|usersession|multiuser|libinfo|launchd|nextsession|host_priv|commpage|persona' | head -100 || true
+          echo "--- LaunchAgents ---"
+          sudo ls /mnt/post/System/Library/LaunchAgents 2>/dev/null | head -60 || true
+          sudo grep -l -i 'cfprefsd' /mnt/post/System/Library/LaunchAgents/*.plist 2>/dev/null | head || true
           echo "--- launchd jobs with user/session services ---"
           sudo python3 - <<'PYEOF'
           import plistlib
           p = plistlib.load(open('/mnt/post/System/Library/xpc/launchd.plist', 'rb'))
+          keys = ('user', 'session', 'libinfo', 'muser', 'cfprefsd', 'containermanager',
+                  'usermanagerd', 'launchservices', 'lsd')
           def walk(o):
               if isinstance(o, dict):
                   if 'Label' in o:
                       ms = o.get('MachServices') or {}
                       names = list(ms) if isinstance(ms, dict) else (ms if isinstance(ms, list) else [])
-                      hits = [s for s in names if any(k in s.lower() for k in ('user', 'session', 'libinfo', 'muser'))]
+                      hits = [s for s in names if any(k in s.lower() for k in keys)]
                       label = str(o.get('Label', ''))
-                      if hits or any(k in label.lower() for k in ('user', 'session', 'libinfo')):
-                          print(label, '=>', hits, 'program=', o.get('Program') or o.get('ProgramArguments'))
+                      if hits or any(k in label.lower() for k in keys):
+                          print(label, '=>', hits,
+                                'sess=', o.get('LimitLoadToSessionType'),
+                                'user=', o.get('UserName'),
+                                'program=', o.get('Program') or o.get('ProgramArguments'))
                   for v in o.values():
                       walk(v)
               elif isinstance(o, list):
@@ -307,8 +331,10 @@ jobs:
           DSC2=/mnt/post/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64
           if [ -f "$DSC2" ] && [ -x "$BIG/ipswbin" ]; then
             timeout 300 "$BIG"/ipswbin dyld str "$DSC2" "muser" "usersession" "user_sessions" 2>&1 | head -60 || true
-            echo "--- xpc_user_sessions_info_routine ---"
-            timeout 300 "$BIG"/ipswbin dyld disass "$DSC2" --symbol __xpc_user_sessions_info_routine --symbol-image libxpc.dylib 2>&1 | head -140 || true
+            echo "--- xpc_user_sessions_info_routine (quiet) ---"
+            timeout 300 "$BIG"/ipswbin dyld disass "$DSC2" --vaddr 0x1d1bf17d8 --count 120 --quiet 2>&1 | head -140 || true
+            echo "--- libxpc user session bytes ---"
+            timeout 300 "$BIG"/ipswbin dyld dump "$DSC2" 0x1d1bf17d8 --size 640 --bytes 2>&1 | head -50 || true
           else
             echo "no cache or ipswbin"
           fi
