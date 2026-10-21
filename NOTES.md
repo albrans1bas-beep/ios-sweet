@@ -34,19 +34,33 @@
 - UMD/persona still show no user session; SpringBoard's UI does not need
   one to start.
 
-**Run 36 (39583748357, `38caf66`, in progress):** same 1200 s. Adds a
-`UIKitCore.framework` probe (`ls`, `*Bounding*`/`*.car`, every
-`BoundingPath*` on the image, `grep` for the 1125x2436 asset name) and
-embeds every `fb-*s.png` snapshot in the step log. Also fixes the stale
-stage pattern `fb-???.png` (never matched `fb-900s.png`).
+**Run 36 (39583748357, `38caf66`, success):** same 1200 s. Snapshots:
+300 s 14,590 B; **600 s 12,744 B = Apple logo on black**; 900 s 7,629 B =
+pure black; 1200 s 15,026 B = console text. So the panel/backboardd path
+works (logo), the display is off by 900 s, and the CoverSheet UI is never
+presented before the abort.
 
-**Next:** decode run 36's `fb-900s.png` (should be the CoverSheet UI just
-before the abort) and read the asset probe. If the asset/catalog is
-missing, install the iPhone X `BoundingPathBitmap` from the IPSW into
-`mkiosroot.sh` (or switch to a screen size whose asset exists). If it is
-present, investigate why `_UIAssetManager` returns nil (bundle path, `.car`
-decode, sandbox) and consider disabling the complex bounding path
-(corner radius / MG cache) as a workaround.
+**Asset probe:** the asset is **present** in the image:
+`UIKitCore.framework/BoundingPathData.bundle/Assets.car` (101,768 B)
+contains the string `BoundingPathBitmap-1125x2436`; the bundle also has
+`BoundingPathData` (34,912 B) and no Info.plist. `Artwork.bundle/Assets.car`
+is 2,648,184 B. So the failure is a runtime `_UIAssetManager`/catalog load,
+not a missing file from the rootfs.
+
+**Run 37 (39588670702, `af7c0f0`) did not start:** GitHub Actions
+annotation: "The job was not started because recent account payments have
+failed or your spending limit needs to be increased." The workflow now
+compares the IPSW original vs the HFS+ copy (md5/mode/size), embeds
+`BoundingPathData.bundle/Assets.car` + `BoundingPathData` gzip+b64, and
+symbolicates the SpringBoard crash stack (`ipsw dyld a2s`). **CI is blocked
+until billing/spending limit is resolved.**
+
+**Next:** once CI works, inspect the extracted `.car`/`BoundingPathData`
+(md5 vs IPSW, Mach-O/BOM validity, modes) and the symbolized crash stack. If
+the copy is intact, the failure is in the asset-catalog load (bundle path,
+`.car` decode, sandbox / missing Info.plist); then either fix that path or
+avoid the complex bounding path (corner radius / MG cache, or a screen size
+whose asset load works).
 
 ### >>> UPDATE 2026-10-21 (later) - 0089 commpage works; MobileGestalt resolves; seeding now progresses; still no user session <<<
 
