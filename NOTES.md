@@ -2,7 +2,51 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
-### >>> UPDATE 2026-10-21 (latest) - root cause found: the SWEET kernel is a macOS-target build, so host_set_multiuser_config_flags returns KERN_NOT_SUPPORTED and the foreground-user commpage is never set <<<
+### >>> UPDATE 2026-10-21 (later) - 0089 commpage works; MobileGestalt resolves; seeding now progresses; still no user session <<<
+
+**Commits:** `12468de` (notes), `780a52a` (MG diagnostics: sample the helper,
+gestalt cache, launchd job walker keys), `a923c25` (try
+`launchd_ios_sessions=1`; launchd/MG diagnostics; LaunchDaemons + global
+session-key dump; sample SpringBoard; longer run).
+
+**Runs:**
+- **39540266408** (0089, 1200 s): `SWEET MULTIUSER: flags 0x1f5 host_priv 1`
+  and UMD `Set Foreground ID + multiuser in commpage successfully`; UMD exits 0.
+  But lsd t2 is deadlocked in libMobileGestalt
+  `__GenerateBuiltInAppInstallSessionID` at all three ticks (240/480/720), and
+  there is still no per-user cfprefsd.
+- **39544946590** (600 s): sampled `MobileGestaltHel`, lsd, cfprefsd,
+  containermanager, launchd. The helper (pid 100) is **idle in CFRunLoop at
+  all ticks**; the gestalt cache directory is **absent**; the helper job is
+  `com.apple.mobilegestalt.xpc` (`user=mobile`, no `LimitLoadToSessionType`),
+  so it is a system-context LaunchDaemon. lsd t1 waits on the MG semaphore at
+  90/180 s and on a sync NSXPC at 270 s.
+- **39547690480** (`a923c25`, 900 s, `launchd_ios_sessions=1`): MG **resolves**
+  between 180 and 270 s. lsd t1: 90 s = MG semaphore; 180 s =
+  `container_replace` sync XPC to containermanager; 270 s = code-signing
+  pread. Data containers grow to **61 at 900 s** (28 at 600 s, 102 at 1500 s
+  without the fix), so the seed scan is progressing. Still: only the system
+  cfprefsd, no `_loginwindow` in passwd, persona/usersession keybags still
+  build-time mtime (`systembag.kb` updated), gestalt cache still absent.
+  launchd logs only the bootstrapper/boot-args/UMD lines - no session logs.
+
+**Launchd job facts (compiled plist):** `com.apple.cfprefsd.xpc.daemon`
+(`sess=None`, `user=None`, `com.apple.cfprefsd.daemon`) and
+`com.apple.containermanagerd` (`sess=None`, `user=None`) are the **per-user**
+services; their `.system` variants are `LimitLoadToSessionType=System` and are
+the only ones running. `MobileGestaltHelper` is **not** session-gated. The
+missing **user session** (not the commpage) is therefore what keeps the
+per-user cfprefsd / containermanagerd instances unlaunched.
+`launchd_ios_sessions=1` alone did **not** create a loginwindow/user session.
+
+**Next:** rootfs run with `secs=1800`, `sweet_sample=450`,
+`names=SpringBoard,MobileGestaltHel,lsd,cfprefsd,containermanager,launchd`;
+check whether seeding finishes and whether SpringBoard's own thread creates
+the session, and dump `/sbin/launchd` session strings + the LaunchDaemons
+loginwindow/windowserver/SpringBoard jobs. If seeding completes but the
+session is still absent, investigate launchd's iOS-session enable path next.
+
+### >>> UPDATE 2026-10-21 - root cause found: the SWEET kernel is a macOS-target build, so host_set_multiuser_config_flags returns KERN_NOT_SUPPORTED and the foreground-user commpage is never set <<<
 
 **Commits:** `02d189e` (0087 sync bypass; sample launchd/umd/lsd), `8481e37`
 (0088: print host_priv decision for usermanagerd + multiuser setter args),
@@ -43,14 +87,11 @@ though UMD is euid 0 and has a host port. 0089 changes the guard to
 - usermanagerd boot task (pid 13) creates the uid-501 session record and
   personas 99/199/1000/100/200, then exits 0; daemon pid 86 is idle.
 
-**Next:** 0089 built (kernel run 39539762413; the setter now disassembles to
-the null check + `printf` + `commpage_update_multiuser_config` + return 0).
-Rootfs run **39540266408** is in flight (`secs=1200`, `snap_every=300`) with
-`0088`+`0089`: samples containermanager/cfprefsd/backboardd/lsd, dumps
-UMD/launchd/lsd entitlements + UMD/launchd imports, LaunchAgents/cfprefsd
-jobs, passwd/keybags. Expect `SWEET MULTIUSER: flags ...` from UMD and a
-per-user cfprefsd to appear; if the commpage setter still fails, the SECTOK
-line shows whether 0088's host_priv was granted.
+**0089 result:** kernel run 39539762413 (setter now null check + `printf` +
+`commpage_update_multiuser_config` + return 0). Rootfs **39540266408** (1200 s,
+`snap_every=300`) confirmed `SWEET MULTIUSER: flags 0x1f5 host_priv 1` and UMD
+success, but the per-user cfprefsd still did not start and lsd was still stuck
+in MG `__GenerateBuiltInAppInstallSessionID`; see the newer section above.
 
 ### >>> UPDATE 2026-10-20 (later) - stdio redirect caused the "SpringBoard respawn loop"; SpringBoard is alive but parked; QEMU sampler runs; CI symbolication added <<<
 
