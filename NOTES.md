@@ -2,6 +2,67 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-10-21 (later 3) - crash stack fully symbolicated; DSC nil-patch applied; SpringBoard no longer aborts but CA commit stalled in that run; sampling backboardd now <<<
+
+**Commits:** `9725020`/`8c0ee08`/`20229c7` (static symbolication fixed to unslide),
+`3ae3400` (DSC patch step), `5047358` (sample backboardd).
+
+- **Symbolication now works.** The run-35 stack addresses are slid runtime
+  vmaddrs; the kernel SMP lines give the boot-wide DSC slide (35:
+  `0x1dbec000`, 37c: `0x483d8000`, 39: `0x3b638000` — slide varies per boot,
+  dynamic steps read it from the log). Corrected chain (run 39611366563):
+  `_loadBitmapForScreen +804` (assert) ← `_UIScreenComplexBoundingPathUtilities
+  initWithScreen: +128` ← `+boundingPathUtilitiesForScreen: +80` ←
+  `-[UIScreen _boundingPathUtilities] +40` ← `-[UIWindow _boundingPath] +140`
+  ← `-[UIView _effectiveBoundingPathAndBoundingPathView:] +168` ←
+  `-[UIView _rectTuckedAgainstBoundingPathEdge:...] +228` ← UIScrollView
+  indicator/safe-area layout ← `-[UIView layoutSublayersOfLayer:]` ←
+  `-[SBCoverSheetSlidingViewController _beginTransitionFromAppeared:]` ←
+  `-[SBLockScreenManager _activateLockScreenAnimated:...]` ←
+  `-[SBStartupTransitionToLockOut performTransitionWithCompletionBlock:]` ←
+  `-[SpringBoard _completeStartupAfterMainSceneConnect:] +4308` ←
+  FBScene create/activate. I.e. the crash is exactly at the CoverSheet/lock
+  screen presentation, triggered by the scrollview safe-area layout asking
+  for the device corner-radius bitmap.
+- **DSC patch (`3ae3400`):** new step "Patch UIKitCore complex bounding path
+  in DSC" mounts the image, disassembles for the record
+  (`_boundingPathUtilities` entry `0x189089614` unslid,
+  `UIWindow _boundingPath` `0x188ed4cd8`, `_loadBitmapForScreen`
+  `0x1890897c4`), then overwrites the method entry with
+  `mov w0,#0; ret` (8 bytes, in-place, mapping-table vmaddr→file offset via
+  the dyld cache header; patches only when the first insn looks like a
+  prologue). Effect: no complex corner-radius bitmaps anywhere (pre-notch
+  behavior). Patch step succeeded in run 39614664981 and the DSC is accepted
+  at exec (no panic).
+- **Run 39 (39618691088, `3ae3400`, 1200 s) — GREEN job, NO SpringBoard
+  crash**, but also no UI: `exec SpringBoard` ring 705, display on 1266,
+  backboardd configured IOMFB + created surfaces 2/3 identical to run 37c,
+  **but never committed a single swap** (37c: swap 2 two lines after sel 55;
+  39: nothing). SpringBoard never reached the scene (no SBRootSceneWindow/
+  CoverSheet lines), main thread parked in the standard XPC drain (same
+  shape as lsd t4); display off at 2066 (backboardd main loop alive, only
+  the CA render thread stalled). Snapshots: 300/600 s identical
+  `71a1fb6fd77d` (nothing), 900 s `7ac013d5f519`, 1200 s `e79b025ede56`
+  (sizes match run 36's black/console-text frames).
+- **backboardd does NOT link UIKitCore** (checked locally from 17.4.1 IPSW
+  — no UIKit load command), so the nil-patch cannot directly stall the CA
+  commit; the stall is a timing/interrupt variance in the CA/IOMFB commit
+  path on our single-vCPU guest (three boots so far have three different
+  slides: `0x1dbec000`, `0x483d8000`, `0x3b638000`).
+- **In flight: run 39626430402 (`5047358`, 1200 s)** with
+  `sweet_sample_names=...backboardd` added — backboardd thread samples will
+  show where the CA render thread parks when it stalls. Then: if the stall
+  reproduces, symbolicate its stack (dynamic sample step unslides
+  automatically) and fix the kernel-side wait; if it doesn't, the patch run
+  was variance and the same config needs a rerun to catch the
+  CoverSheet-passing boot.
+- Boot-variance note: run 37c (pre-patch, 1000 s) had IDENTICAL early boot
+  to 39 (exec SpringBoard 705, backboardd 776, driverkitd crash at ~930
+  with same backtrace) and swaps 2-6 — so the park is intermittent, not
+  structural.
+- SpringBoard crash-pre-patch (run 35) happened at the CoverSheet
+  presentation ~917 s guest; 1200 s runs are needed.
+
 ### >>> UPDATE 2026-10-21 (later 2) - crash stack slides identified; static symbolication fixed to unslide; run 39608828120 in flight <<<
 
 **Commits:** `9725020` + `8c0ee08` (unslide-before-a2s; heredoc→`python3 -c`).
