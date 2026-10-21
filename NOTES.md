@@ -2,6 +2,52 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-10-21 (night) - SpringBoard UI scene comes up with pruned apps + 0090, then aborts on missing UIKit bounding-path asset <<<
+
+**Commits:** `8cfffdb` (run 34 workflow/notes), `87bd3a9` (0090 + prune),
+`c269b12` (verify 0090), `38caf66` (probe UIKit assets + embed fb snapshots).
+
+**Run 35 (39554311968, `87bd3a9`, 0090 kernel, pruned apps, 1200 s):**
+- Early: `exec SpringBoard`, `exec backboardd`; backboardd presents five
+  frames (swaps 2-6, surfaces 2/3 1125x2436 BGRA) in the first 450 s, then
+  requests display off. Its render loop stops there; the fade-to-black path
+  then owns the panel.
+- SpringBoard builds its UI late: `SBRootSceneWindow - display ... 375x812@3x`,
+  `SBWindowScene ... Window requested to become key`, and
+  `<CoverSheet> ... activationState: ForegroundActive` after sample tick 2
+  (~900 s).
+- At guest 15:17 (~917 s) SpringBoard aborts:
+  `*** Assertion failure in -[_UIScreenComplexBoundingPathUtilities
+  _loadBitmapForScreen:type:] ... Failed to load bounding path bitmap data
+  from the asset manager for asset name:
+  BoundingPathBitmap-1125x2436-375x812-3.00x`, then
+  `CRASH SpringBoard reason ns 2 code 0x6`, `SWEET EXIT ... sig 6`;
+  launchd re-execs SpringBoard.
+- The final fb is black with kernel console text (`SK[0]:
+  __nexus_register identityservices(53): nxprov_create: 1`), not the UI.
+  fb.txt OCR is a 23-byte gzip: the glyph matcher sees no text. The 900 s
+  snapshot exists in `qemu-out/fb-900s.png` but run 35's workflow only
+  embedded the final fb, and artifact upload was quota-blocked.
+- Timeline from the ring log: `exec SpringBoard` 1169, display on 1728,
+  swaps 1806-2090, tick 3 2178, display off 2523, tick 2 2655, CoverSheet
+  2779+, crash ~917 s. Ticks are 450/900 s; run is 1200 s.
+- UMD/persona still show no user session; SpringBoard's UI does not need
+  one to start.
+
+**Run 36 (39583748357, `38caf66`, in progress):** same 1200 s. Adds a
+`UIKitCore.framework` probe (`ls`, `*Bounding*`/`*.car`, every
+`BoundingPath*` on the image, `grep` for the 1125x2436 asset name) and
+embeds every `fb-*s.png` snapshot in the step log. Also fixes the stale
+stage pattern `fb-???.png` (never matched `fb-900s.png`).
+
+**Next:** decode run 36's `fb-900s.png` (should be the CoverSheet UI just
+before the abort) and read the asset probe. If the asset/catalog is
+missing, install the iPhone X `BoundingPathBitmap` from the IPSW into
+`mkiosroot.sh` (or switch to a screen size whose asset exists). If it is
+present, investigate why `_UIAssetManager` returns nil (bundle path, `.car`
+decode, sandbox) and consider disabling the complex bounding path
+(corner radius / MG cache) as a workaround.
+
 ### >>> UPDATE 2026-10-21 (later) - 0089 commpage works; MobileGestalt resolves; seeding now progresses; still no user session <<<
 
 **Commits:** `12468de` (notes), `780a52a` (MG diagnostics: sample the helper,
