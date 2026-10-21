@@ -2,6 +2,100 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-10-21 (later 5) - LOCK SCREEN REACHED in QEMU (run 39668968848, `3f122eb`); next crash class: NSMotionUsageDescription TCC abort <<<
+
+**Commits:** `3f122eb` (keep PosterBoard, sample SpringBoard, block-device
+mkiosroot, local tools) is the run that reached the lock screen.
+
+- **Run 39668968848 (`3f122eb`, secs=1800, snap 300): success.** Job green,
+  artifact `rootfs-logs` uploaded (artifact quota freed). fsck-after:
+  `The volume iOSRoot appears to be OK` (case-sensitive).
+- **Screen (fb.png = final frame, md5 `71F7C663A86CD3BA3B720F16B4FE111E`): the
+  iOS 16 lock screen.** Black wallpaper, red `Wednesday, December 31` and big
+  red `4:29`, green charging battery top-right, camera button bottom-right,
+  home indicator. No wallpaper image (PosterBoard present, none configured) and
+  no "swipe up" hint - cosmetic, expected for an unconfigured device; the
+  date/time are defaults (no RTC).
+- **Progression:** 300 s fb-300s.png (Apple logo + `SK[0]` text), 600 s black,
+  900 s fb-900s.png still shows kernel `SK[0]: __nexus_register
+  identitieservices(53): nxprov_create: 1` lines; 1200/1500/1800 s frames exist
+  only in `qemu-out/` (log b64 dump skips long lines); final fb.png = lock
+  screen.
+- **PosterBoard fix works:** `Missing executable` is gone from the log.
+- **NEW crash class (unfixed): SpringBoard aborts twice, sig 6, same pc**
+  `0x1ec8768c0` (unslid `0x1c2a5e6c0`), bt `0x1ec897b78 0x1cc938740 0x1cc938e2c
+  0x1cc9340d4 0x1cc938a50 0x1b7df0780 0x1b7dd2a50 0x1c6c19b94 0x1cc9350b0
+  0x1bbee2dc8`, reason `This app has crashed because it attempted to access
+  privacy-sensitive data without a usage description. The app's Info.plist must
+  contain an NSMotionUsageDescription key ...` plus `SWEET Sandbox: dasd
+  privilege 10001 denied`. Pids 27 and 245; a later launch survived and drew
+  the lock screen (450 s samples). Next fix: add NSMotionUsageDescription to
+  `SpringBoard.app/Info.plist` in the rootfs tweaks, then verify stability with
+  a longer run.
+- **crash-newest.ips** = iPhoneRestore `bug_type 183`, `restore_error
+  -536870160`, `splat_installed: 0`, `Could not get options entry from the
+  device tree` - restore bookkeeping, not a userspace crash.
+- **Local loop:** WSL still dead (CRC). QEMU-Alpine has no hfsplus. Pivoted to
+  the **Ubuntu noble cloud image** (`E:\linuxvm\noble-server-cloudimg-amd64.img`,
+  qcow2, 593 MiB) with a **CIDATA vvfat seed** (`E:\linuxvm\seed`; the drive
+  needs `format=vvfat` or QEMU probes raw and rejects `label=`). cloud-init runs
+  `E:\linuxvm\ubuntu-build.sh` (apt: hfsprogs, apfs-fuse,
+  linux-modules-extra for hfsplus; builds `/dev/vdd` from `tools.tar.gz`).
+  Driver `E:\linuxvm\ubuntu-driver.py` (serial 4557, monitor 4558, `shot.py`
+  PPM->PNG screendump). State: VM not running; an earlier boot was serial-silent
+  for 6 min (GRUB likely VGA-only), so the next test must screendump at 90 s and
+  check cloud-init ran at all.
+
+### >>> UPDATE 2026-10-21 (later 4) - DSC patch works, SpringBoard survives; boot spinner; PosterBoard kept; local loop on QEMU-Alpine <<<
+
+**Commits:** `1bf353e` (raw byte gate), `a7dbef5` (header offsets),
+`f7ca5bd` (scan all `dyld_shared_cache_arm64*` subcaches), `99ae527` (accept
+any pre-index `stp` prologue), `3f122eb` (keep PosterBoard, sample
+SpringBoard, add local image tools).
+
+- **Run 39661619540 (`99ae527`, 1200 s): first boot with the patch applied.**
+  The patcher found the hit in subcache `.03` (old bytes
+  `f44fbea9 fd7b01a9` = `stp x20,x19,[sp,#-0x20]!` + `stp x29,x30,[sp,#0x10]`)
+  and wrote `mov w0,#0; ret`. **No `CRASH SpringBoard`**; the only lock-screen
+  line is UIKit's
+  `Unbalanced calls to begin/end appearance transitions for
+  <SBCoverSheetPrimarySlidingViewController>`, and SpringBoard is alive at the
+  end (SWEET PROC dump + samples at 900 s).
+- **Screen:** 300 s Apple logo + `SK[0]: __nexus_register / rapportd(84):
+  nxprov_create: 1` text (md5 `11cd59c3f50a`); 600 s black
+  (`71a1fb6fd77d`); 900 s and 1200 s identical centered spinner
+  (`1e30f37fff93`). The crash is fixed, but the UI sits at iOS's boot spinner
+  for the last 5+ min; the lock screen is not reached yet.
+- **Missing daemon:** at user-session start (guest 16:12:03) launchd logs
+  `user/501/com.apple.PosterBoard: Missing executable` - iOS 16's wallpaper
+  daemon lives in `/Applications/PosterBoard.app`, which mkiosroot pruned with
+  the rest of the app set. `3f122eb` adds `PosterBoard.app` to `keep_apps` and
+  adds `SpringBoard` to the sample-symbolication list (its own frames were
+  never resolved; only DSC libraries resolve).
+- **In flight: run 39668968848 (`3f122eb`, secs=1800, snap_every=300)** -
+  rebuilt image with PosterBoard, 30 min boot. Next evidence: fb-1500s/1800s
+  and the symbolicated SpringBoard t0 sample. If it still spins, check whether
+  the lock screen transition waits on PosterBoard/wallpaper or on first-boot
+  data migration (lsd/containermanagerd were still busy at the end of run 46).
+- **Local loop (user chose WSL custom kernel): WSL2 is still unusable.**
+  `VirtualMachinePlatform` is Disabled and DISM `/RestoreHealth` now fails
+  with a CRC error (corrupt component store) - needs a Windows repair/reboot
+  path, not more enable attempts. Fallback on this host: **QEMU Alpine 3.20
+  VM under TCG** boots `vmlinuz-virt` + `initramfs-virt` over serial; the
+  guest build script fetches the dmgs over HTTP from the Windows host.
+  **Blocker: Alpine's kernel has no HFS+ support** - no `hfsplus.ko` in the
+  initramfs (165 modules) nor in the full modloop (924 modules), so the HFS+
+  image cannot be mounted locally. Options: build `hfsplus.ko` against the
+  Alpine kernel, use a distro whose kernel ships hfsplus (Ubuntu
+  `linux-modules-extra`), or keep CI as the image builder.
+- **Local artifacts:** IPSW `E:\ipsw16\iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw`
+  (5.75 GB); dmgs `E:\ipsw16\{OS,SystemOS,AppOS}.dmg` (4.41/2.55/0.01 GB);
+  run-46 artifacts+`qemu.log` `E:\ioslocal\run46`; kernel
+  `E:\ioslocal\kernel\kernel.development.sweet`; Alpine VM under
+  `E:\linuxvm` (`vmlinuz-virt`, `initramfs-virt`, `modloop-virt`,
+  `overlay.tar.gz`, `vm-driver.py`, `guest-build.sh`); host HTTP server:
+  `python -m http.server 8000 --bind 127.0.0.1 --directory E:/`.
+
 ### >>> UPDATE 2026-10-21 (later 3) - crash stack fully symbolicated; DSC nil-patch applied; SpringBoard no longer aborts but CA commit stalled in that run; sampling backboardd now <<<
 
 **Commits:** `9725020`/`8c0ee08`/`20229c7` (static symbolication fixed to unslide),
