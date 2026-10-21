@@ -143,6 +143,68 @@ jobs:
           rm -rf "$BIG"/dmgs
           df -h "$BIG"
 
+      - name: Patch UIKitCore complex bounding path in DSC
+        run: |
+          sudo fsck.hfsplus -fy "$BIG"/rootfs.img || true
+          sudo mkdir -p /mnt/iosroot
+          sudo mount -t hfsplus -o loop,force "$BIG"/rootfs.img /mnt/iosroot
+          trap 'sudo umount /mnt/iosroot' EXIT
+          DSC=/mnt/iosroot/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64
+          [ -f "$DSC" ] || DSC=$(sudo find /mnt/iosroot -name 'dyld_shared_cache_arm64' -type f | head -1)
+          [ -f "$DSC" ] || { echo "no DSC in image"; exit 0; }
+          ls -la "$DSC"
+          IP="$BIG"/ipswbin
+          [ -x "$IP" ] || IP=./ipswbin
+          echo "--- disass UIScreen _boundingPathUtilities (entry 0x189089614) ---"
+          timeout 120 "$IP" dyld disass "$DSC" --vaddr 0x189089614 --count 12 2>&1 | head -20 || true
+          echo "--- disass UIWindow _boundingPath (entry 0x188ed4cd8) ---"
+          timeout 120 "$IP" dyld disass "$DSC" --vaddr 0x188ed4cd8 --count 48 2>&1 | head -60 || true
+          echo "--- disass _loadBitmapForScreen (entry 0x1890897c4) ---"
+          timeout 120 "$IP" dyld disass "$DSC" --vaddr 0x1890897c4 --count 220 2>&1 | head -260 || true
+          FIRST=$(timeout 120 "$IP" dyld disass "$DSC" --vaddr 0x189089614 --count 1 2>&1 | grep -oE '0x189089614:.*' | head -1)
+          echo "first insn: $FIRST"
+          case "$FIRST" in
+            *pacibsp*|*stp*|*sub*sp*)
+              sudo python3 -c "
+          import struct
+          path = '$DSC'
+          vaddr = 0x189089614
+          patch = struct.pack('<II', 0x52800000, 0xd65f03c0)
+          f = open(path, 'r+b')
+          hdr = f.read(0x4000)
+          assert hdr[:7] == b'dyld_v1', hdr[:16]
+          mappingOffset, mappingCount = struct.unpack_from('<II', hdr, 20)
+          foff = None
+          for stride in (32, 24):
+              vm0, fo0, sz0 = struct.unpack_from('<QQQ', hdr, mappingOffset)
+              if 0x100000000 <= vm0 <= 0x400000000:
+                  print('stride', stride, 'entry0', hex(vm0), hex(fo0), hex(sz0))
+                  for i in range(mappingCount):
+                      vm, fo, sz = struct.unpack_from('<QQQ', hdr, mappingOffset + i*stride)
+                      print('mapping', i, hex(vm), hex(fo), hex(sz))
+                      if vm <= vaddr < vm + sz:
+                          foff = fo + (vaddr - vm)
+                          break
+                  break
+          assert foff is not None, 'mapping covering vaddr not found'
+          f.seek(0, 2)
+          fsize = f.tell()
+          print('file size', fsize, 'patch offset', hex(foff))
+          assert foff + 8 <= fsize, 'patch outside main cache file'
+          f.seek(foff)
+          old = f.read(8)
+          print('old bytes:', old.hex())
+          f.seek(foff)
+          f.write(patch)
+          f.seek(foff)
+          print('new bytes:', f.read(8).hex())
+          f.close()
+          print('PATCHED UIScreen _boundingPathUtilities -> mov w0,#0; ret')
+          "
+              ;;
+            *) echo "entry prologue not recognized; NOT patching" ;;
+          esac
+
       - name: Fetch the latest kernel from the rolling release
         run: |
           mkdir -p kernel
