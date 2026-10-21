@@ -157,7 +157,7 @@ jobs:
       - name: QEMU smoke test
         run: |
           python3 tools/mkpayload.py kernel/kernel.development.sweet "$BIG"/sweet-qemu.adt \
-            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 sweetvio_test=1 sweetfb_noconsole=1 sweetproc_dump=600 sweet_exit_trace=1 sweet_sample=240 sweet_sample_names=usermanagerd -enable_kprintf_spam -noprogress wdt=-1"
+            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 sweetvio_test=1 sweetfb_noconsole=1 sweetproc_dump=600 sweet_exit_trace=1 sweet_sample=240 sweet_sample_names=securityd,lsd -enable_kprintf_spam -noprogress wdt=-1"
           sudo env PATH="$PATH" python3 tools/qemu-sweet.py "$BIG"/payload.bin qemu-out \
             --secs "${{ inputs.secs }}" --snap-every "${{ inputs.snap_every }}" --kernel kernel/kernel.development.sweet --disk "$BIG"/rootfs.img \
             --dump-symbol sweet_log_ring:0x400000 --dump-symbol sweet_log_total:8 \
@@ -225,7 +225,7 @@ jobs:
                   for tok in re.findall(r'0x[0-9a-f]{6,}', line[b:]):
                       lst.append(int(tok, 16) - slide)
           out, seen = [], set()
-          for name in ('usermanagerd',):
+          for name in ('securityd', 'lsd'):
               for a in procs.get(name, []):
                   if 0x180000000 <= a < 0x280000000 and a not in seen:
                       seen.add(a)
@@ -279,6 +279,30 @@ jobs:
           sudo find /mnt/post/private/var/db/lsd -maxdepth 2 -type f -printf '%s %p\n' 2>/dev/null | head -20 || true
           echo "--- usermanagerd strings ---"
           sudo strings -a /mnt/post/usr/libexec/usermanagerd 2>/dev/null | grep -iE 'foreground|usersession|multiuser|libinfo|launchd' | head -40 || true
+          echo "--- launchd jobs with user/session services ---"
+          sudo python3 - <<'PYEOF'
+          import plistlib
+          p = plistlib.load(open('/mnt/post/System/Library/xpc/launchd.plist', 'rb'))
+          def walk(o):
+              if isinstance(o, dict):
+                  if 'Label' in o:
+                      ms = o.get('MachServices') or {}
+                      names = list(ms) if isinstance(ms, dict) else (ms if isinstance(ms, list) else [])
+                      hits = [s for s in names if any(k in s.lower() for k in ('user', 'session', 'libinfo', 'muser'))]
+                      label = str(o.get('Label', ''))
+                      if hits or any(k in label.lower() for k in ('user', 'session', 'libinfo')):
+                          print(label, '=>', hits, 'program=', o.get('Program') or o.get('ProgramArguments'))
+                  for v in o.values():
+                      walk(v)
+              elif isinstance(o, list):
+                  for v in o:
+                      walk(v)
+          walk(p)
+          PYEOF
+          echo "--- usersession strings in dyld cache ---"
+          sudo grep -aohE "com\.apple\.[A-Za-z0-9._-]*(user|User|session|Session)[A-Za-z0-9._-]*" \
+            /mnt/post/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64* 2>/dev/null \
+            | sort -u | head -60 || true
           echo "--- LaunchServices files ---"
           sudo find /mnt/post/private/var -iname '*launchservices*' -printf '%s %p\n' 2>/dev/null | head -40 || true
           echo "--- container counts ---"
