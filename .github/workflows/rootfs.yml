@@ -157,7 +157,7 @@ jobs:
       - name: QEMU smoke test
         run: |
           python3 tools/mkpayload.py kernel/kernel.development.sweet "$BIG"/sweet-qemu.adt \
-            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 sweetvio_test=1 sweetfb_noconsole=1 sweetproc_dump=600 sweet_exit_trace=1 sweet_sample=90 sweet_sample_names=MobileGestaltHel,lsd,cfprefsd,containermanager,launchd sweet_nosync=1 -enable_kprintf_spam -noprogress wdt=-1"
+            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 launchd_ios_sessions=1 sweetvio_test=1 sweetfb_noconsole=1 sweetproc_dump=600 sweet_exit_trace=1 sweet_sample=90 sweet_sample_names=MobileGestaltHel,lsd,cfprefsd,containermanager,launchd sweet_nosync=1 -enable_kprintf_spam -noprogress wdt=-1"
           sudo env PATH="$PATH" python3 tools/qemu-sweet.py "$BIG"/payload.bin qemu-out \
             --secs "${{ inputs.secs }}" --snap-every "${{ inputs.snap_every }}" --kernel kernel/kernel.development.sweet --disk "$BIG"/rootfs.img \
             --dump-symbol sweet_log_ring:0x400000 --dump-symbol sweet_log_total:8 \
@@ -302,8 +302,14 @@ jobs:
           echo "--- MobileGestalt install-session ID code ---"
           DSCA=/mnt/post/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64
           if [ -f "$DSCA" ] && [ -x "$BIG/ipswbin" ]; then
-            timeout 240 "$BIG"/ipswbin dyld disass "$DSCA" --symbol __GenerateBuiltInAppInstallSessionID --count 80 2>&1 | head -110 || true
+            for V in 0x19c57c430 0x19c57c644 0x19c57c084 0x19c5716e8 0x19c556440 0x19c564b10 0x19c5673dc 0x19c568910; do
+              echo "== $V"
+              timeout 120 "$BIG"/ipswbin dyld disass "$DSCA" --vaddr "$V" --count 40 --quiet 2>&1 | head -50 || true
+            done
           fi
+          echo "--- LaunchDaemons (gestalt/cfprefsd/user) ---"
+          sudo ls /mnt/post/System/Library/LaunchDaemons 2>/dev/null | grep -iE 'gestalt|cfprefsd|user' || true
+          sudo grep -l -i 'gestalt' /mnt/post/System/Library/LaunchDaemons/*.plist 2>/dev/null | head || true
           echo "--- LaunchAgents ---"
           sudo ls /mnt/post/System/Library/LaunchAgents 2>/dev/null | head -60 || true
           sudo grep -l -i 'cfprefsd' /mnt/post/System/Library/LaunchAgents/*.plist 2>/dev/null | head || true
@@ -338,6 +344,25 @@ jobs:
                   for v in o:
                       walk(v)
           walk(p)
+          PYEOF
+          echo "--- launchd global session keys ---"
+          sudo python3 - <<'PYEOF'
+          import plistlib
+          p = plistlib.load(open('/mnt/post/System/Library/xpc/launchd.plist', 'rb'))
+          lines = []
+          def walk(o, path=''):
+              if isinstance(o, dict):
+                  for k, v in o.items():
+                      s = str(k).lower()
+                      if ('session' in s or 'ios' in s) and not isinstance(v, (dict, list)):
+                          lines.append(path + '/' + str(k) + ' = ' + repr(v))
+                      walk(v, path + '/' + str(k))
+              elif isinstance(o, list):
+                  for i, v in enumerate(o):
+                      walk(v, path + '[' + str(i) + ']')
+          walk(p)
+          for l in lines[:80]:
+              print(l)
           PYEOF
           echo "--- usersession strings in dyld cache ---"
           sudo grep -aohE "com\.apple\.[A-Za-z0-9._-]*(user|User|session|Session)[A-Za-z0-9._-]*" \
