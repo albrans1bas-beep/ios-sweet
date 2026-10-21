@@ -166,18 +166,16 @@ jobs:
           f = open(path, 'r+b')
           hdr = f.read(0x4000)
           assert hdr[:7] == b'dyld_v1', hdr[:16]
-          mappingOffset, mappingCount = struct.unpack_from('<II', hdr, 20)
+          mappingOffset, mappingCount = struct.unpack_from('<II', hdr, 16)
+          print('mappingOffset', mappingOffset, 'mappingCount', mappingCount)
           foff = None
-          for stride in (32, 24):
-              vm0, fo0, sz0 = struct.unpack_from('<QQQ', hdr, mappingOffset)
-              if 0x100000000 <= vm0 <= 0x400000000:
-                  print('stride', stride, 'entry0', hex(vm0), hex(fo0), hex(sz0))
-                  for i in range(mappingCount):
-                      vm, fo, sz = struct.unpack_from('<QQQ', hdr, mappingOffset + i*stride)
-                      print('mapping', i, hex(vm), hex(fo), hex(sz))
-                      if vm <= vaddr < vm + sz:
-                          foff = fo + (vaddr - vm)
-                          break
+          stride = 32
+          for i in range(mappingCount):
+              vm, fo = struct.unpack_from('<QQ', hdr, mappingOffset + i*stride)
+              sz = struct.unpack_from('<I', hdr, mappingOffset + i*stride + 16)[0]
+              print('mapping', i, hex(vm), hex(fo), hex(sz))
+              if vm <= vaddr < vm + sz:
+                  foff = fo + (vaddr - vm)
                   break
           assert foff is not None, 'mapping covering vaddr not found'
           f.seek(0, 2)
