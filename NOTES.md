@@ -61,7 +61,10 @@ commpage word to `0x1f5` (mobile uid 501) in `commpage_populate()` for
 `ARM64_BOARD_CONFIG_SWEET`. Rationale: `launchd` imports
 `host_get_multiuser_config_flags` and its session decision likely runs
 before UMD's setter (~32 s vs UMD boot task). `0x1f5` is exactly what UMD
-writes later, so this is a no-op once UMD runs.
+writes later, so this is a no-op once UMD runs. Kernel run 39553649929
+succeeded; verified in the asset: `commpage_populate+0x608` is
+`mov w10, #0x1f5; str w10, [x9, #0x108]`.
+
 
 
 ### >>> UPDATE 2026-10-21 - root cause found: the SWEET kernel is a macOS-target build, so host_set_multiuser_config_flags returns KERN_NOT_SUPPORTED and the foreground-user commpage is never set <<<
