@@ -95,6 +95,17 @@ for c in OS App; do
 	done
 done
 
+# DIAG: UIKit's bounding-path data, original vs the HFS+ copy (sizes/md5/mode).
+for f in \
+    System/Library/PrivateFrameworks/UIKitCore.framework/BoundingPathData.bundle/Assets.car \
+    System/Library/PrivateFrameworks/UIKitCore.framework/BoundingPathData.bundle/BoundingPathData \
+    System/Library/PrivateFrameworks/UIKitCore.framework/Artwork.bundle/Assets.car; do
+    echo "DIAG $f"
+    sudo md5sum "$work/os/root/$f" "$work/root/$f" 2>&1 || true
+    sudo stat -c '%a %s %n' "$work/os/root/$f" "$work/root/$f" 2>&1 || true
+    file "$work/root/$f" 2>/dev/null || true
+done
+
 # logd's log stores, normally made at restore: it checks owner _logd (272)
 # and mode, plus a .migrated marker, else asks a helper and crashes
 # ("BUG IN LIBTRACE: Failed to migrate directory").

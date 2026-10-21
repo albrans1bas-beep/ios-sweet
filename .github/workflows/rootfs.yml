@@ -261,6 +261,13 @@ jobs:
             echo "== $u"
             timeout 90 "$BIG"/ipswbin dyld a2s "$DSC" "$u" -d 2>&1 | head -2 || true
           done
+          echo "--- symbolicated SpringBoard crash stack ---"
+          grep -a -A6 'First throw call stack' sweetlog.txt | head -10 || true
+          CRASHLINE=$(grep -a -A6 'First throw call stack' sweetlog.txt | grep -oE '0x1[0-9a-f]{8}' | head -32)
+          for u in $CRASHLINE; do
+            echo "== $u"
+            timeout 90 "$BIG"/ipswbin dyld a2s "$DSC" "$u" -d 2>&1 | head -3 || true
+          done
 
       - name: fsck after boot
         if: always()
@@ -410,6 +417,15 @@ jobs:
           sudo grep -arl 'BoundingPathBitmap-1125x2436' "$UIK" /mnt/post/System/Library/CoreServices/SpringBoard.app 2>/dev/null | head -20 || true
           echo "-- UIKitCore Info.plist strings --"
           sudo strings -a "$UIK/Info.plist" 2>/dev/null | head -30 || true
+          BP="$UIK/BoundingPathData.bundle"
+          echo "-- BoundingPathData.bundle modes --"
+          sudo ls -la "$BP" 2>/dev/null || true
+          for f in "$BP/Assets.car" "$BP/BoundingPathData"; do
+            sudo test -f "$f" || continue
+            echo "--- $f.gzip.b64 ---"
+            sudo gzip -9 -c "$f" | base64 -w0
+            echo
+          done
           sudo umount /mnt/post || true
 
       - name: Stage and compress artifacts
