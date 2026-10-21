@@ -264,7 +264,7 @@ jobs:
           echo "--- symbolicated SpringBoard crash stack ---"
           grep -a -A6 'First throw call stack' sweetlog.txt | head -10 || true
           CRASHLINE=$(grep -a -A6 'First throw call stack' sweetlog.txt | grep -oE '0x1[0-9a-f]{8}' | head -32)
-          SLIDE=$(grep -aoE 'SMP [A-Za-z]+\[[0-9]+\] slide 0x[0-9a-f]+' sweetlog.txt | head -1 | grep -oE '0x[0-9a-f]+')
+          SLIDE=$(grep -aoE 'SMP [A-Za-z]+\[[0-9]+\] slide 0x[0-9a-f]+' sweetlog.txt | head -1 | grep -oE '0x[0-9a-f]+' || true)
           SLIDE=${SLIDE:-0x0}
           echo "slide=$SLIDE"
           for u in $CRASHLINE; do
@@ -283,7 +283,7 @@ jobs:
           DSC=/mnt/crash/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64
           [ -f "$DSC" ] || DSC=$(sudo find /mnt/crash -name 'dyld_shared_cache_arm64' -type f | head -1)
           [ -f "$DSC" ] || exit 0
-          SLIDE=$(grep -aoE 'SMP [A-Za-z]+\[[0-9]+\] slide 0x[0-9a-f]+' sweetlog.txt 2>/dev/null | head -1 | grep -oE '0x[0-9a-f]+')
+          SLIDE=$(grep -aoE 'SMP [A-Za-z]+\[[0-9]+\] slide 0x[0-9a-f]+' sweetlog.txt 2>/dev/null | head -1 | grep -oE '0x[0-9a-f]+' || true)
           SLIDE=${SLIDE:-0x1dbec000}
           echo "slide=$SLIDE"
           python3 -c "
