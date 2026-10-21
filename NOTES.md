@@ -71,6 +71,19 @@ is intact. Need the suspension appealed/verified; if the account is not
 restored, push the local clone to a new repo on a healthy account and rerun
 (the `kernel-latest` release must be recreated/ rebuilt).
 
+**Run 37c (39600603998, `3344f32`, `albrans1bas-beep`, 1000 s):**
+completed. The image bundle is **byte-identical to the IPSW source**:
+`Assets.car` md5 `7b4ca97e...` (101768, 644), `BoundingPathData` md5
+`3f66269f...` (34912, 755, Mach-O arm64 MH_BUNDLE), `Info.plist` md5
+`682944fa...` (790, bplist), `_CodeSignature/CodeResources` md5
+`18c8afe9...` (2467). So the bounding-path asset is not missing/corrupt;
+the failure is runtime asset-manager loading. QEMU: SpringBoard alive at
+the 900 s sample, display on at ring line 1268, swaps 2-6, display off at
+2053, no crash by 1000 s (the run ended just before the UI scene/crash);
+all 300/600/900 s snapshots are the same image. 1000 s is too short for
+the crash; use 1200 s. Added a step that symbolizes the known run-35
+SpringBoard crash stack from the image's DSC without QEMU.
+
 ### >>> UPDATE 2026-10-21 (later) - 0089 commpage works; MobileGestalt resolves; seeding now progresses; still no user session <<<
 
 **Commits:** `12468de` (notes), `780a52a` (MG diagnostics: sample the helper,
