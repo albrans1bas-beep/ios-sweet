@@ -46,6 +46,24 @@ the session, and dump `/sbin/launchd` session strings + the LaunchDaemons
 loginwindow/windowserver/SpringBoard jobs. If seeding completes but the
 session is still absent, investigate launchd's iOS-session enable path next.
 
+**Run 34 (dispatched, `8cfffdb`):** 1800 s, sample=450, SpringBoard sampled;
+also dumps launchd usersession strings and the full LaunchDaemons list.
+
+**Seeding cost:** one data container per `/Applications` bundle at ~7 s
+each under TCG (102 containers at 1500 s, 129 at 3000 s), so a full stock
+`/Applications` needs hours. `tools/mkiosroot.sh` now keeps only
+`Preferences.app`, `Setup.app` and `MobileSafari.app` and moves the rest to
+`/Applications.disabled`; this should cut the lsd seed scan to a few
+bundles. Move entries back from that directory to restore the full set.
+
+**Patch 0090 (built immediately after commit):** presets the multiuser
+commpage word to `0x1f5` (mobile uid 501) in `commpage_populate()` for
+`ARM64_BOARD_CONFIG_SWEET`. Rationale: `launchd` imports
+`host_get_multiuser_config_flags` and its session decision likely runs
+before UMD's setter (~32 s vs UMD boot task). `0x1f5` is exactly what UMD
+writes later, so this is a no-op once UMD runs.
+
+
 ### >>> UPDATE 2026-10-21 - root cause found: the SWEET kernel is a macOS-target build, so host_set_multiuser_config_flags returns KERN_NOT_SUPPORTED and the foreground-user commpage is never set <<<
 
 **Commits:** `02d189e` (0087 sync bypass; sample launchd/umd/lsd), `8481e37`

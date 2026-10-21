@@ -1,0 +1,21 @@
+diff --git a/osfmk/arm/commpage/commpage.c b/osfmk/arm/commpage/commpage.c
+index f9e0e5b..e2c7a41 100644
+--- a/osfmk/arm/commpage/commpage.c
++++ b/osfmk/arm/commpage/commpage.c
+@@ -157,6 +157,16 @@ commpage_populate(void)
+ 		c2 = 0;
+ 	}
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	/*
++	 * The SWEET kernel is a macOS-target build, so nothing presets the
++	 * multiuser commpage word at boot. UMD's host_set_multiuser_config_flags()
++	 * call only happens after launchd has started; preset the mobile
++	 * foreground uid so launchd sees a foreground user from PID 1 startup.
++	 */
++	commpage_update_multiuser_config(0x1f5);
++#endif
++
+ 	*((uint16_t*)(_COMM_PAGE_CACHE_LINESIZE + _COMM_PAGE_RW_OFFSET)) = c2;
+ 
+ 	commpage_update_active_cpus();

@@ -112,6 +112,26 @@ printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
 	'<plist version="1.0"><dict><key>KeyBagKeys</key><data>U1dFRVQ=</data></dict></plist>' |
 	sudo install -m 0600 -o 0 -g 0 /dev/stdin "$work/root/private/var/keybags/systembag.kb"
 
+# First-boot LaunchServices seeding creates one data container per application
+# bundle through a synchronous containermanagerd XPC; under TCG that runs at
+# roughly one bundle per 7 seconds.  Keep the bundle set that SpringBoard needs
+# for first boot and move the rest aside, so the seed scan (and therefore the
+# long lsd startup) is short enough to observe the UI.  The full set can be
+# restored by moving Applications.disabled entries back.
+keep_apps=" Preferences.app Setup.app MobileSafari.app "
+if sudo test -d "$work/root/Applications"; then
+	sudo install -d "$work/root/Applications.disabled"
+	for app in "$work/root/Applications"/*.app; do
+		sudo test -e "$app" || continue
+		case "$keep_apps" in
+		*" ${app##*/} "*) continue ;;
+		esac
+		sudo mv "$app" "$work/root/Applications.disabled/"
+	done
+	echo "pruned applications; kept:"
+	sudo ls "$work/root/Applications" | head -20
+fi
+
 # lsd's LaunchDaemon is demand-started by the first LaunchServices client in
 # this userland (SpringBoard); its startup journal recovery then deadlocks
 # with the queued blocking database fetch (lsd main thread waits in
