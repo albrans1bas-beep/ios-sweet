@@ -153,6 +153,14 @@ jobs:
           [ -f "$DSC" ] || DSC=$(sudo find /mnt/iosroot -name 'dyld_shared_cache_arm64' -type f | head -1)
           [ -f "$DSC" ] || { echo "no DSC in image"; exit 0; }
           ls -la "$DSC"
+          # ipsw (Go) OOMs parsing the ~2 GB DSC symbols right after the image
+          # build fills the page cache: free the caches and add swap first.
+          sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' || true
+          sudo fallocate -l 8G "$BIG"/swapfile || true
+          sudo chmod 600 "$BIG"/swapfile || true
+          sudo mkswap "$BIG"/swapfile >/dev/null 2>&1 || true
+          sudo swapon "$BIG"/swapfile || true
+          free -h || true
           IP="$BIG"/ipswbin
           [ -x "$IP" ] || IP=./ipswbin
           echo "--- disass UIScreen _boundingPathUtilities (entry 0x189089614) ---"
