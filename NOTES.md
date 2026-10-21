@@ -111,6 +111,69 @@ the seed (count `container_replace` calls / print LS DB size per sample).
 If SpringBoard proceeds, make the default smoke run long enough or pre-seed
 the LS database so later runs are fast.
 
+### >>> UPDATE 2026-10-21 - first boot is a real deadlock: lsd waits on the foreground user session, runningboardd/SpringBoard wait on lsd <<<
+
+**Commits:** `68761d6` (secs/snap inputs, SpringBoard-first symbolication),
+`d865cdb` (sample containermanagerd, cap 72, container counts), `e4e46ac`
+(50-min run, embed final fb.png b64, app count, depth-5 find), `c59ba26`
+(sample runningboardd/launchd, dump LaunchServices files), `37f69d8`
+(launchd only), `6dc8906` (usermanagerd only + its strings).
+Runs: 39490835644 (30 min), 39498588743 (900 s), 39503374616 (3000 s),
+39511522598 (900 s, runningboardd), 39518002758 (900 s, launchd),
+39521354834 (900 s, usermanagerd, in flight).
+
+**Findings:**
+- Seeding is real work and it progresses, but it does not finish the boot.
+  At 900 s: 66 app data containers; at 3000 s: 129 containers of 143
+  `/Applications` bundles. lsd's scan thread was seen in
+  `MIFilesystemScanner` -> `MILaunchServicesDatabaseGatherer` ->
+  `MIExecutableBundle needsDataContainer` -> code-sign validation
+  (`MISValidateSignatureAndCopyInfoWithProgress` -> SecStaticCode ->
+  DiskRep::bestGuess -> CFBundleCreate -> open) and later in
+  MIContainer/containermanagerd sync XPC. It is slow (TCG hashing), not hung.
+- lsd's *startup queue* is separately blocked in
+  `-[_LSInstallProgressService restoreInactiveInstalls]` ->
+  `MIInstalledInfoGatherer _populateBundleRecordValues` ->
+  `MIContainer groupContainerURLsForBundleIdentifier:persona:` ->
+  `GetEligiblePersonaForBundle` -> `xpc_user_sessions_get_foreground_uid`
+  -> `xpc_pipe_routine` -> `mach_msg2_trap` (no reply).
+  The main thread's `performJournalRecovery` `dispatch_sync` waits on that
+  same serial queue, so `LSServerMain` never finishes and no client is served.
+- Clients: runningboardd worker in `-[RBBundlePropertiesLSProvider init]` ->
+  `+[LSApplicationProxy applicationProxyForBundleType:identifier:...]`
+  -> `_LSContextInit` -> `LSCopyServerStore` ->
+  `___LAUNCH_SERVICES_IS_RESEEDING_ITS_DATABASE_AND_MAY_BLOCK__` -> sync
+  NSXPC (waiting on lsd). SpringBoard's LSContextInit wait is the same.
+- After ~30 min of LS wait SpringBoard aborts: `SWEET EXIT: pid 26 ...
+  SpringBoard rv 0x6 code 0 sig 6` + `CRASH SpringBoard ... reason ns 2
+  code 0x6`, then launchd relaunches it (pid 228, sampled at 2700 s, again
+  in LSContextInit). The framebuffer goes black around then (logo window
+  gone) and only kernel kprintf text remains (embedded fb.png confirms).
+- launchd is *not* blocking the user-session query: its sampled threads are
+  an idle dispatch mach workloop, a sigsuspend thread and a `sync` call.
+  usermanagerd is the usersession backend; its early boot task printed
+  `UMD_INIT: Unable to Obtained foreground, curFG:502, nextID:-1`,
+  `Regular mode Setup for user:501 ... CurrentsessionID:-1`,
+  `UMD_INIT: FAILED to Set Foreground ID + multiuser in commpage successfully`.
+  The daemon instance (pid 86) is sampled in run 39521354834.
+- Workflow now embeds `fb.png` base64 (artifacts still quota-blocked; the
+  b64 is the only way to see the screen) and counts `/Applications` +
+  app/plugin/daemon/group containers after the run.
+
+**Hypothesis:** a boot-order cycle. lsd's first-boot database work needs the
+foreground user session; the foreground session is established by the UI
+path (usermanagerd/runningboardd/SpringBoard); runningboardd and SpringBoard
+cannot get past LaunchServices init because lsd is still reseeding. On a real
+device the foreground session exists before lsd asks; here the early
+usermanagerd setup failed to set it, so nobody can progress.
+
+**Next:** read usermanagerd's sampled stack from run 39521354834. If it is
+stuck in its own init/XPC, find what it waits for; if it is idle/healthy,
+then the `xpc_user_sessions` request is being dropped and the fix is to
+establish the foreground session before lsd's `restoreInactiveInstalls`
+(e.g. make the early `Set Foreground ID` succeed, or start the foreground
+session setup earlier). Long-run smoke inputs are now `secs`/`snap_every`.
+
 ### >>> UPDATE 2026-10-20 - SPRINGBOARD DRAWS THE APPLE BOOT SCREEN; virtio self-test clean; no HFS corruption in run 39399391323 <<<
 
 **Commits:** `4d13023` (0082: data-desc direction flags per request - WRITE
