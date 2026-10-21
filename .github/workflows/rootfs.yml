@@ -298,6 +298,13 @@ jobs:
           echo "--- LaunchAgents ---"
           sudo ls /mnt/post/System/Library/LaunchAgents 2>/dev/null | head -60 || true
           sudo grep -l -i 'cfprefsd' /mnt/post/System/Library/LaunchAgents/*.plist 2>/dev/null | head || true
+          echo "--- user database ---"
+          for f in /mnt/post/private/etc/master.passwd /mnt/post/private/etc/passwd; do
+            echo "## $f"
+            sudo grep -E '^(root|mobile|_?loginwindow|_windowserver|daemon):' "$f" 2>/dev/null | head -20 || true
+          done
+          echo "--- keybags ---"
+          sudo ls -la /mnt/post/private/var/keybags 2>/dev/null | head -10 || true
           echo "--- launchd jobs with user/session services ---"
           sudo python3 - <<'PYEOF'
           import plistlib
