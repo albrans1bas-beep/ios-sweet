@@ -62,6 +62,15 @@ the copy is intact, the failure is in the asset-catalog load (bundle path,
 avoid the complex bounding path (corner radius / MG cache, or a screen size
 whose asset load works).
 
+**Run 37b (39595426934, `c1c1122`, transferred to naquon0):** the repo was
+transferred to `naquon0` to move Actions billing; `naquon0` logged in and
+the run started, reaching QEMU. At ~12:21Z GitHub suspended the `naquon0`
+account; all API/log access now returns 403 and the run is inaccessible.
+`super-xl` lost access after the transfer. The local clone/HEAD `c1c1122`
+is intact. Need the suspension appealed/verified; if the account is not
+restored, push the local clone to a new repo on a healthy account and rerun
+(the `kernel-latest` release must be recreated/ rebuilt).
+
 ### >>> UPDATE 2026-10-21 (later) - 0089 commpage works; MobileGestalt resolves; seeding now progresses; still no user session <<<
 
 **Commits:** `12468de` (notes), `780a52a` (MG diagnostics: sample the helper,
