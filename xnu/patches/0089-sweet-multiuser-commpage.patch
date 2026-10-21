@@ -1,0 +1,13 @@
+diff --git a/osfmk/kern/host.c b/osfmk/kern/host.c
+index 6d5155b..3ea468e 100644
+--- a/osfmk/kern/host.c
++++ b/osfmk/kern/host.c
+@@ -1386,7 +1386,7 @@ host_set_atm_diagnostic_flag(host_t host, uint32_t diagnostic_flag)
+ kern_return_t
+ host_set_multiuser_config_flags(host_priv_t host_priv, uint32_t multiuser_config)
+ {
+-#if !defined(XNU_TARGET_OS_OSX)
++#if !defined(XNU_TARGET_OS_OSX) || defined(ARM64_BOARD_CONFIG_SWEET)
+ 	printf("SWEET MULTIUSER: flags 0x%x host_priv %d\n",
+ 	    multiuser_config, host_priv != HOST_PRIV_NULL);
+ 	if (host_priv == HOST_PRIV_NULL) {
