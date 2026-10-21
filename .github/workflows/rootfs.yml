@@ -157,7 +157,7 @@ jobs:
       - name: QEMU smoke test
         run: |
           python3 tools/mkpayload.py kernel/kernel.development.sweet "$BIG"/sweet-qemu.adt \
-            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 sweetvio_test=1 sweetfb_noconsole=1 sweetproc_dump=600 sweet_exit_trace=1 sweet_sample=240 sweet_sample_names=securityd,lsd -enable_kprintf_spam -noprogress wdt=-1"
+            "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 sweetvio_test=1 sweetfb_noconsole=1 sweetproc_dump=600 sweet_exit_trace=1 sweet_sample=240 sweet_sample_names=usermanagerd,launchd,lsd sweet_nosync=1 -enable_kprintf_spam -noprogress wdt=-1"
           sudo env PATH="$PATH" python3 tools/qemu-sweet.py "$BIG"/payload.bin qemu-out \
             --secs "${{ inputs.secs }}" --snap-every "${{ inputs.snap_every }}" --kernel kernel/kernel.development.sweet --disk "$BIG"/rootfs.img \
             --dump-symbol sweet_log_ring:0x400000 --dump-symbol sweet_log_total:8 \
@@ -225,12 +225,12 @@ jobs:
                   for tok in re.findall(r'0x[0-9a-f]{6,}', line[b:]):
                       lst.append(int(tok, 16) - slide)
           out, seen = [], set()
-          for name in ('securityd', 'lsd'):
+          for name in ('usermanagerd', 'launchd', 'lsd'):
               for a in procs.get(name, []):
                   if 0x180000000 <= a < 0x280000000 and a not in seen:
                       seen.add(a)
                       out.append(a)
-          for a in out[:72]:
+          for a in out[:150]:
               print(hex(a))
           print('per process:', {k: len(v) for k, v in procs.items()}, 'unique:', len(out), file=sys.stderr)
           EOF
@@ -303,6 +303,15 @@ jobs:
           sudo grep -aohE "com\.apple\.[A-Za-z0-9._-]*(user|User|session|Session)[A-Za-z0-9._-]*" \
             /mnt/post/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64* 2>/dev/null \
             | sort -u | head -60 || true
+          echo "--- libxpc usersession service strings ---"
+          DSC2=/mnt/post/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64
+          if [ -f "$DSC2" ] && [ -x "$BIG/ipswbin" ]; then
+            timeout 300 "$BIG"/ipswbin dyld str "$DSC2" "muser" "usersession" "user_sessions" 2>&1 | head -60 || true
+            echo "--- xpc_user_sessions_info_routine ---"
+            timeout 300 "$BIG"/ipswbin dyld disass "$DSC2" --symbol __xpc_user_sessions_info_routine --symbol-image libxpc.dylib 2>&1 | head -140 || true
+          else
+            echo "no cache or ipswbin"
+          fi
           echo "--- LaunchServices files ---"
           sudo find /mnt/post/private/var -iname '*launchservices*' -printf '%s %p\n' 2>/dev/null | head -40 || true
           echo "--- container counts ---"

@@ -1,0 +1,24 @@
+diff --git a/bsd/vfs/vfs_syscalls.c b/bsd/vfs/vfs_syscalls.c
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -3146,8 +3146,20 @@
+ /* ARGSUSED */
+ int
+ sync(__unused proc_t p, __unused struct sync_args *uap, __unused int32_t *retval)
+ {
++	static int sweet_nosync = -1;
++
++	if (sweet_nosync < 0) {
++		uint32_t bypass = 0;
++
++		PE_parse_boot_argn("sweet_nosync", &bypass, sizeof(bypass));
++		sweet_nosync = (bypass == 1);
++	}
++	if (sweet_nosync) {
++		return 0;
++	}
++
+ 	vfs_iterate(LK_NOWAIT, sync_callback, NULL);
+ 
+ 	if (print_vmpage_stat) {
+ 		vm_countdirtypages();
