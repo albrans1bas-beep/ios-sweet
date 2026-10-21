@@ -20,7 +20,13 @@ set -euo pipefail
 
 [[ $# -ge 4 ]] || { sed -n '2,12p' "$0"; exit 2; }
 os=$(realpath "$1") sysos=$(realpath "$2") appos=$(realpath "$3") out=$4 size=${5:-16G}
-[[ ! -e $out ]] || { echo "refusing to overwrite $out" >&2; exit 1; }
+# A block device (QEMU -drive) is formatted in place instead of a loop image.
+on_device=0
+if [[ -b $out ]]; then
+	on_device=1
+else
+	[[ ! -e $out ]] || { echo "refusing to overwrite $out" >&2; exit 1; }
+fi
 
 work=$(mktemp -d)
 mounts=()
@@ -56,10 +62,18 @@ apfs_mount "$os" os
 apfs_mount "$sysos" sysos
 apfs_mount "$appos" appos
 
-truncate -s "$size" "$out"
-mkfs.hfsplus -s -v iOSRoot "$out"
+if ((on_device)); then
+	mkfs.hfsplus -s -v iOSRoot "$out"
+else
+	truncate -s "$size" "$out"
+	mkfs.hfsplus -s -v iOSRoot "$out"
+fi
 mkdir "$work/root"
-sudo mount -t hfsplus -o loop,force "$out" "$work/root"
+if ((on_device)); then
+	sudo mount -t hfsplus -o force "$out" "$work/root"
+else
+	sudo mount -t hfsplus -o loop,force "$out" "$work/root"
+fi
 mounts=("$work/root" "${mounts[@]}")
 
 copy() {
@@ -131,7 +145,7 @@ printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
 # for first boot and move the rest aside, so the seed scan (and therefore the
 # long lsd startup) is short enough to observe the UI.  The full set can be
 # restored by moving Applications.disabled entries back.
-keep_apps=" Preferences.app Setup.app MobileSafari.app "
+keep_apps=" Preferences.app Setup.app MobileSafari.app PosterBoard.app "
 if sudo test -d "$work/root/Applications"; then
 	sudo install -d "$work/root/Applications.disabled"
 	for app in "$work/root/Applications"/*.app; do
