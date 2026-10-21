@@ -420,7 +420,7 @@ jobs:
           BP="$UIK/BoundingPathData.bundle"
           echo "-- BoundingPathData.bundle modes --"
           sudo ls -la "$BP" 2>/dev/null || true
-          for f in "$BP/Assets.car" "$BP/BoundingPathData"; do
+          for f in "$BP/Assets.car" "$BP/BoundingPathData" "$BP/Info.plist" "$BP/_CodeSignature/CodeResources"; do
             sudo test -f "$f" || continue
             echo "--- $f.gzip.b64 ---"
             sudo gzip -9 -c "$f" | base64 -w0

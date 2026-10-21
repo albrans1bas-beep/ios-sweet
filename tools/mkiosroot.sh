@@ -99,6 +99,8 @@ done
 for f in \
     System/Library/PrivateFrameworks/UIKitCore.framework/BoundingPathData.bundle/Assets.car \
     System/Library/PrivateFrameworks/UIKitCore.framework/BoundingPathData.bundle/BoundingPathData \
+    System/Library/PrivateFrameworks/UIKitCore.framework/BoundingPathData.bundle/Info.plist \
+    System/Library/PrivateFrameworks/UIKitCore.framework/BoundingPathData.bundle/_CodeSignature/CodeResources \
     System/Library/PrivateFrameworks/UIKitCore.framework/Artwork.bundle/Assets.car; do
     echo "DIAG $f"
     sudo md5sum "$work/os/root/$f" "$work/root/$f" 2>&1 || true
