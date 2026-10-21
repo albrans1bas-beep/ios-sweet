@@ -153,33 +153,12 @@ jobs:
           [ -f "$DSC" ] || DSC=$(sudo find /mnt/iosroot -name 'dyld_shared_cache_arm64' -type f | head -1)
           [ -f "$DSC" ] || { echo "no DSC in image"; exit 0; }
           ls -la "$DSC"
-          # ipsw (Go) OOMs parsing the ~2 GB DSC symbols right after the image
-          # build fills the page cache: free the caches and add swap first.
-          sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches' || true
-          sudo fallocate -l 8G "$BIG"/swapfile || true
-          sudo chmod 600 "$BIG"/swapfile || true
-          sudo mkswap "$BIG"/swapfile >/dev/null 2>&1 || true
-          sudo swapon "$BIG"/swapfile || true
-          free -h || true
-          IP="$BIG"/ipswbin
-          [ -x "$IP" ] || IP=./ipswbin
-          echo "--- disass UIScreen _boundingPathUtilities (entry 0x189089614) ---"
-          timeout 600 "$IP" dyld disass "$DSC" --vaddr 0x189089614 --count 12 2>&1 | head -20 || true
-          echo "--- disass UIWindow _boundingPath (entry 0x188ed4cd8) ---"
-          timeout 600 "$IP" dyld disass "$DSC" --vaddr 0x188ed4cd8 --count 48 2>&1 | head -60 || true
-          echo "--- disass _loadBitmapForScreen (entry 0x1890897c4) ---"
-          timeout 600 "$IP" dyld disass "$DSC" --vaddr 0x1890897c4 --count 220 2>&1 | head -260 || true
-          FIRST=""
-          for try in 1 2 3; do
-            FIRST=$(timeout 600 "$IP" dyld disass "$DSC" --vaddr 0x189089614 --count 1 2>&1 | grep -oE '0x189089614:.*' | head -1 || true)
-            [ -n "$FIRST" ] && break
-            echo "disass attempt $try empty; retrying"
-            sleep 5
-          done
-          echo "first insn: $FIRST"
-          case "$FIRST" in
-            *pacibsp*|*stp*|*sub*sp*)
-              sudo python3 -c "
+          # NOTE: `ipsw dyld disass` OOMs on this runner (~21 GB VA reservation
+          # for the ~2 GB DSC symbol map), so the gate is a raw byte check:
+          # a2s-derived entry of -[UIScreen _boundingPathUtilities]
+          # (0x18908963c minus its +40 offset) must start with a standard
+          # arm64 prologue before we overwrite it with `mov w0,#0; ret`.
+          sudo python3 -c "
           import struct
           path = '$DSC'
           vaddr = 0x189089614
@@ -208,16 +187,22 @@ jobs:
           f.seek(foff)
           old = f.read(8)
           print('old bytes:', old.hex())
-          f.seek(foff)
-          f.write(patch)
-          f.seek(foff)
-          print('new bytes:', f.read(8).hex())
+          w = struct.unpack('<I', old[:4])[0]
+          if w in (0x52800000, 0xd65f03c0):
+              print('already patched')
+          elif w in (0xa9bf7bfd, 0xd503237f):
+              f.seek(foff)
+              f.write(patch)
+              f.seek(foff)
+              nb = f.read(8)
+              print('new bytes:', nb.hex())
+              assert nb == patch
+              print('PATCHED UIScreen _boundingPathUtilities -> mov w0,#0; ret')
+          else:
+              print('first word', hex(w), 'is not a known prologue; refusing')
+              raise SystemExit(1)
           f.close()
-          print('PATCHED UIScreen _boundingPathUtilities -> mov w0,#0; ret')
           "
-              ;;
-              *) echo "entry prologue not recognized; refusing to boot an unpatched image" ; exit 1 ;;
-          esac
 
       - name: Fetch the latest kernel from the rolling release
         run: |
