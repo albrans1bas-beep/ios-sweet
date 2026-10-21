@@ -400,6 +400,16 @@ jobs:
             sudo head -c 30000 "$NEW" || true
             sudo cp "$NEW" /tmp/newest.ips
           fi
+          echo "--- UIKitCore bundle / bounding path assets ---"
+          UIK=/mnt/post/System/Library/PrivateFrameworks/UIKitCore.framework
+          sudo ls -la "$UIK" 2>/dev/null | head -40 || true
+          sudo find "$UIK" -maxdepth 4 \( -iname '*Bounding*' -o -iname '*.car' \) -printf '%s %p\n' 2>/dev/null | head -60 || true
+          echo "-- every bounding path file on the image --"
+          sudo find /mnt/post/System /mnt/post/Applications -iname '*BoundingPath*' -printf '%s %p\n' 2>/dev/null | head -60 || true
+          echo "-- files containing the 1125x2436 asset name --"
+          sudo grep -arl 'BoundingPathBitmap-1125x2436' "$UIK" /mnt/post/System/Library/CoreServices/SpringBoard.app 2>/dev/null | head -20 || true
+          echo "-- UIKitCore Info.plist strings --"
+          sudo strings -a "$UIK/Info.plist" 2>/dev/null | head -30 || true
           sudo umount /mnt/post || true
 
       - name: Stage and compress artifacts
@@ -409,7 +419,15 @@ jobs:
           cp qemu-out/fb.png qemu-out/fb.txt qemu-out/qemu.log qemu-out/regs.txt \
             qemu-out/result.json qemu-out/serial.txt \
             qemu-out/sweet_log_ring.bin qemu-out/sweet_log_total.bin stage-logs/ 2>/dev/null || true
-          cp qemu-out/fb-???.png stage-logs/ 2>/dev/null || true
+          cp qemu-out/fb-???s.png stage-logs/ 2>/dev/null || true
+          echo "--- snapshot files ---"
+          ls -la qemu-out/fb-*s.png 2>/dev/null || true
+          for s in qemu-out/fb-*s.png; do
+            [ -f "$s" ] || continue
+            echo "--- $s.b64 ---"
+            base64 -w0 "$s"
+            echo
+          done
           python3 tools/sweetlog-extract.py qemu-out/sweet_log_ring.bin qemu-out/sweet_log_total.bin \
             stage-logs/sweetlog.txt 2>/dev/null || true
           cp fsck-after.txt stage-logs/ 2>/dev/null || true
