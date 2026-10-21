@@ -2,6 +2,56 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-10-21 (latest) - root cause found: the SWEET kernel is a macOS-target build, so host_set_multiuser_config_flags returns KERN_NOT_SUPPORTED and the foreground-user commpage is never set <<<
+
+**Commits:** `02d189e` (0087 sync bypass; sample launchd/umd/lsd), `8481e37`
+(0088: print host_priv decision for usermanagerd + multiuser setter args),
+`e3d1424` (rootfs: dump passwd/keybags, entitlements/imports, cfprefsd jobs),
+`38b09f1` (0089: enable the iOS multiuser branch for
+`ARM64_BOARD_CONFIG_SWEET`).
+Kernel runs 39529045897 (0087), 39538679051 (0088). Rootfs run
+39530252145 (1500 s, `sweet_nosync=1`) decoded and symbolicated locally.
+
+**Finding (the root cause):** `xnu/config/MASTER.arm64.sweet` is based on
+`MASTER.arm64.MacOSX`, so the kernel is compiled with `XNU_TARGET_OS_OSX=1`.
+`host_set_multiuser_config_flags()` is therefore compiled as the macOS stub:
+disassembly of the 0088 kernel at `_host_set_multiuser_config_flags` is
+`mov w0, #0x2e; ret` (0x2e = KERN_NOT_SUPPORTED). `commpage_update_multiuser_config()`
+itself is fine (writes `_commpage_rw_addr + 0x108`). Result: the foreground
+uid/multiuser word at `_COMM_PAGE_MULTIUSER_CONFIG` stays 0, launchd sees no
+foreground user/console user, no per-user launchd session is created, the
+per-user cfprefsd never starts, and `lsd` (a `UserName=mobile` job) blocks
+forever in a CFPreferences sync XPC. This explains UMD's
+`FAILED to Set Foreground ID + multiuser in commpage successfully` even
+though UMD is euid 0 and has a host port. 0089 changes the guard to
+`#if !defined(XNU_TARGET_OS_OSX) || defined(ARM64_BOARD_CONFIG_SWEET)`.
+
+**Run 30 stacks (full local symbolication, slide 0x34dc0000):**
+- lsd t1 is the **seed scan** (`MIFilesystemScanner` ->
+  `MILaunchServicesDatabaseGatherer scanExecutableBundle:` ->
+  `_dataContainerCreatingIfNeeded:` -> `MIContainer` ->
+  `_container_query_execute` / `_container_replace` ->
+  `_container_xpc_send_sync_message` -> mach reply wait). It advances one
+  container per sync containermanager XPC, which is why seeding is so slow
+  under TCG (102 containers at 1500 s, 129 at 3000 s).
+- lsd t2/t3 wait on the "database seeding" dispatch group; t0
+  (`performJournalRecovery`) does a `dispatch_sync` to the install-progress
+  queue (t3), so `LSServerMain` does not finish and clients are not served.
+- lsd t7 is a **CFPreferences sync XPC**
+  (`_CFPREFERENCES_IS_WAITING_FOR_USER_CFPREFSD`) waiting for the missing
+  per-user cfprefsd. Only the system cfprefsd (pid 92) exists.
+- usermanagerd boot task (pid 13) creates the uid-501 session record and
+  personas 99/199/1000/100/200, then exits 0; daemon pid 86 is idle.
+
+**Next:** 0089 built (kernel run 39539762413; the setter now disassembles to
+the null check + `printf` + `commpage_update_multiuser_config` + return 0).
+Rootfs run **39540266408** is in flight (`secs=1200`, `snap_every=300`) with
+`0088`+`0089`: samples containermanager/cfprefsd/backboardd/lsd, dumps
+UMD/launchd/lsd entitlements + UMD/launchd imports, LaunchAgents/cfprefsd
+jobs, passwd/keybags. Expect `SWEET MULTIUSER: flags ...` from UMD and a
+per-user cfprefsd to appear; if the commpage setter still fails, the SECTOK
+line shows whether 0088's host_priv was granted.
+
 ### >>> UPDATE 2026-10-20 (later) - stdio redirect caused the "SpringBoard respawn loop"; SpringBoard is alive but parked; QEMU sampler runs; CI symbolication added <<<
 
 **Commits:** `9772f48` (0083 exit trace; stdio_to_console reverted),
