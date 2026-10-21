@@ -264,9 +264,13 @@ jobs:
           echo "--- symbolicated SpringBoard crash stack ---"
           grep -a -A6 'First throw call stack' sweetlog.txt | head -10 || true
           CRASHLINE=$(grep -a -A6 'First throw call stack' sweetlog.txt | grep -oE '0x1[0-9a-f]{8}' | head -32)
+          SLIDE=$(grep -aoE 'SMP [A-Za-z]+\[[0-9]+\] slide 0x[0-9a-f]+' sweetlog.txt | head -1 | grep -oE '0x[0-9a-f]+')
+          SLIDE=${SLIDE:-0x0}
+          echo "slide=$SLIDE"
           for u in $CRASHLINE; do
-            echo "== $u"
-            timeout 90 "$BIG"/ipswbin dyld a2s "$DSC" "$u" -d 2>&1 | head -3 || true
+            u2=$(python3 -c "print(hex(int('$u',16)-int('$SLIDE',16)))")
+            echo "== $u (unslid $u2)"
+            timeout 90 "$BIG"/ipswbin dyld a2s "$DSC" "$u2" -d 2>&1 | head -3 || true
           done
 
       - name: Symbolicate known SpringBoard crash stack
@@ -279,24 +283,36 @@ jobs:
           DSC=/mnt/crash/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64
           [ -f "$DSC" ] || DSC=$(sudo find /mnt/crash -name 'dyld_shared_cache_arm64' -type f | head -1)
           [ -f "$DSC" ] || exit 0
-          for u in \
-            0x1a49dd40c 0x19dcb9c28 0x19f1c1810 0x1a6c75ae8 0x1a6c75748 \
-            0x1a6c756ac 0x1a6c7563c 0x1a6ac0d64 0x1a6ac10e8 0x1a6ac0edc \
-            0x1a6abf954 0x1a69be68c 0x1a78a5700 0x1a69be36c 0x1a69b5938 \
-            0x1a6975104 0x1a6973c18 0x1a69733a8 0x1a5e7960c 0x1a6a34bb8 \
-            0x1e341a434 0x1e34166d0 0x1e380d048 0x1e364a5f8 0x1e37258b0 \
-            0x1e3a5d894 0x1e3446f60 0x1e3810694 0x1e3639384 0x1ab951ec0 \
-            0x1ab954c54 0x1ab9590c0 0x1e36d4444 0x1e397c890 0x1e346e49c \
-            0x1e391aff0 0x1e359359c 0x1e35928ec 0x1e391b378 0x1a6ad2cdc \
-            0x1a6b5ffb8 0x1b9502efc 0x1c0252bcc 0x1c02518a0 0x1c0284e30 \
-            0x1ab93dd70 0x1c0237c54 0x1c0232ef0 0x1c0256ba8 0x1c0241dc0 \
-            0x1c027c7a4 0x1e36a8da8 0x1e36a8a8c 0x1e3a17628 0x1e35d9b30 \
-            0x1e35d9428 0x1e3a174b8 0x1e36a902c 0x1e36a88c0 0x1e3a51af8 \
-            0x1a6c9c6a0 0x1a6c9c350 0x1a6c9add0 0x1a6c9aa5c 0x1a6ce1184 \
-            0x1a6ce0328 0x1a6cdffc4 0x1e34515e8 0x1c2210344; do
+          SLIDE=$(grep -aoE 'SMP [A-Za-z]+\[[0-9]+\] slide 0x[0-9a-f]+' sweetlog.txt 2>/dev/null | head -1 | grep -oE '0x[0-9a-f]+')
+          SLIDE=${SLIDE:-0x1dbec000}
+          echo "slide=$SLIDE"
+          python3 - "$SLIDE" > /tmp/unslid.txt <<'PYEOF'
+import sys
+slide = int(sys.argv[1], 16)
+addrs = """
+0x1a49dd40c 0x19dcb9c28 0x19f1c1810 0x1a6c75ae8 0x1a6c75748
+0x1a6c756ac 0x1a6c7563c 0x1a6ac0d64 0x1a6ac10e8 0x1a6ac0edc
+0x1a6abf954 0x1a69be68c 0x1a78a5700 0x1a69be36c 0x1a69b5938
+0x1a6975104 0x1a6973c18 0x1a69733a8 0x1a5e7960c 0x1a6a34bb8
+0x1e341a434 0x1e34166d0 0x1e380d048 0x1e364a5f8 0x1e37258b0
+0x1e3a5d894 0x1e3446f60 0x1e3810694 0x1e3639384 0x1ab951ec0
+0x1ab954c54 0x1ab9590c0 0x1e36d4444 0x1e397c890 0x1e346e49c
+0x1e391aff0 0x1e359359c 0x1e35928ec 0x1e391b378 0x1a6ad2cdc
+0x1a6b5ffb8 0x1b9502efc 0x1c0252bcc 0x1c02518a0 0x1c0284e30
+0x1ab93dd70 0x1c0237c54 0x1c0232ef0 0x1c0256ba8 0x1c0241dc0
+0x1c027c7a4 0x1e36a8da8 0x1e36a8a8c 0x1e3a17628 0x1e35d9b30
+0x1e35d9428 0x1e3a174b8 0x1e36a902c 0x1e36a88c0 0x1e3a51af8
+0x1a6c9c6a0 0x1a6c9c350 0x1a6c9add0 0x1a6c9aa5c 0x1a6ce1184
+0x1a6ce0328 0x1a6cdffc4 0x1e34515e8 0x1c2210344
+""".split()
+for a in addrs:
+    print(hex(int(a, 16) - slide))
+PYEOF
+          cat /tmp/unslid.txt
+          while read -r u; do
             echo "== $u"
             timeout 90 "$BIG"/ipswbin dyld a2s "$DSC" "$u" -d 2>&1 | head -3 || true
-          done
+          done < /tmp/unslid.txt
 
       - name: fsck after boot
         if: always()
