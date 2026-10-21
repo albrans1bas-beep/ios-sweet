@@ -149,39 +149,49 @@ jobs:
           sudo mkdir -p /mnt/iosroot
           sudo mount -t hfsplus -o loop,force "$BIG"/rootfs.img /mnt/iosroot
           trap 'sudo umount /mnt/iosroot' EXIT
-          DSC=/mnt/iosroot/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64
-          [ -f "$DSC" ] || DSC=$(sudo find /mnt/iosroot -name 'dyld_shared_cache_arm64' -type f | head -1)
-          [ -f "$DSC" ] || { echo "no DSC in image"; exit 0; }
-          ls -la "$DSC"
+          CDIR=/mnt/iosroot/System/Library/Caches/com.apple.dyld
+          sudo ls -la "$CDIR"
           # NOTE: `ipsw dyld disass` OOMs on this runner (~21 GB VA reservation
-          # for the ~2 GB DSC symbol map), so the gate is a raw byte check:
-          # a2s-derived entry of -[UIScreen _boundingPathUtilities]
-          # (0x18908963c minus its +40 offset) must start with a standard
-          # arm64 prologue before we overwrite it with `mov w0,#0; ret`.
+          # for the ~2 GB DSC symbol map), so the gate is a raw byte check.
+          # iOS 16 splits the cache: `dyld_shared_cache_arm64` is a 393 KB
+          # stub (mapping 0x180000000+0x5c000 only); the real images live in
+          # the subcaches (.01, .02, ...) hard-linked into the same directory
+          # by mkiosroot.sh. Scan every file; the a2s-derived entry of
+          # -[UIScreen _boundingPathUtilities] (0x18908963c minus its +40
+          # offset) must start with a standard arm64 prologue before we
+          # overwrite it with `mov w0,#0; ret`.
           sudo python3 -c "
-          import struct
-          path = '$DSC'
+          import glob, struct
           vaddr = 0x189089614
           patch = struct.pack('<II', 0x52800000, 0xd65f03c0)
-          f = open(path, 'r+b')
-          hdr = f.read(0x4000)
-          assert hdr[:7] == b'dyld_v1', hdr[:16]
-          mappingOffset, mappingCount = struct.unpack_from('<II', hdr, 16)
-          print('mappingOffset', mappingOffset, 'mappingCount', mappingCount)
-          foff = None
-          stride = 32
-          for i in range(mappingCount):
-              vm, fo = struct.unpack_from('<QQ', hdr, mappingOffset + i*stride)
-              sz = struct.unpack_from('<I', hdr, mappingOffset + i*stride + 16)[0]
-              print('mapping', i, hex(vm), hex(fo), hex(sz))
-              if vm <= vaddr < vm + sz:
-                  foff = fo + (vaddr - vm)
-                  break
-          assert foff is not None, 'mapping covering vaddr not found'
-          f.seek(0, 2)
-          fsize = f.tell()
-          print('file size', fsize, 'patch offset', hex(foff))
-          assert foff + 8 <= fsize, 'patch outside main cache file'
+          CDIR = '$CDIR'
+          hit = None
+          for path in sorted(glob.glob(CDIR + '/dyld_shared_cache_arm64*')):
+              try:
+                  f = open(path, 'r+b')
+              except IsADirectoryError:
+                  continue
+              hdr = f.read(0x4000)
+              if len(hdr) < 0x1a0 or hdr[:7] != b'dyld_v1':
+                  print('skip', path, hdr[:16])
+                  continue
+              mappingOffset, mappingCount = struct.unpack_from('<II', hdr, 16)
+              f.seek(0, 2)
+              fsize = f.tell()
+              print(path, 'size', fsize, 'mappingOffset', mappingOffset, 'mappingCount', mappingCount)
+              for i in range(mappingCount):
+                  vm, sz = struct.unpack_from('<QQ', hdr, mappingOffset + i*32)
+                  fo = struct.unpack_from('<I', hdr, mappingOffset + i*32 + 16)[0]
+                  ok = sz > 0 and fo + sz <= fsize
+                  print('  mapping', i, hex(vm), hex(sz), hex(fo), '' if ok else 'INVALID')
+                  if ok and vm <= vaddr < vm + sz and hit is None:
+                      hit = (path, f, fsize, fo + (vaddr - vm))
+              if hit is None or hit[0] != path:
+                  f.close()
+          assert hit is not None, 'no cache mapping covers the vaddr'
+          path, f, fsize, foff = hit
+          print('patching', path, 'at', hex(foff))
+          assert foff + 8 <= fsize, 'patch outside cache file'
           f.seek(foff)
           old = f.read(8)
           print('old bytes:', old.hex())
@@ -195,7 +205,7 @@ jobs:
               nb = f.read(8)
               print('new bytes:', nb.hex())
               assert nb == patch
-              print('PATCHED UIScreen _boundingPathUtilities -> mov w0,#0; ret')
+              print('PATCHED UIScreen _boundingPathUtilities -> mov w0,#0; ret in', path)
           else:
               print('first word', hex(w), 'is not a known prologue; refusing')
               raise SystemExit(1)
