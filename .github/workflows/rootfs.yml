@@ -198,7 +198,7 @@ jobs:
           w = struct.unpack('<I', old[:4])[0]
           if w in (0x52800000, 0xd65f03c0):
               print('already patched')
-          elif w in (0xa9bf7bfd, 0xd503237f):
+          elif (w & 0xffc00000) == 0xa9800000 or w == 0xd503237f:
               f.seek(foff)
               f.write(patch)
               f.seek(foff)
