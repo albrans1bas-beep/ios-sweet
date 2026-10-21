@@ -2,6 +2,43 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-10-21 (later 2) - crash stack slides identified; static symbolication fixed to unslide; run 39608828120 in flight <<<
+
+**Commits:** `9725020` + `8c0ee08` (unslide-before-a2s; heredoc→`python3 -c`).
+
+- **Dispatch 422 mystery:** `9725020` broke the workflow YAML (python heredoc
+  body at column 0 inside the block scalar) so GitHub saw no
+  `workflow_dispatch` trigger → `HTTP 422: Workflow does not have
+  'workflow_dispatch' trigger`. `8c0ee08` re-indents all three python blocks
+  (YAML parses; `workflow_dispatch` intact). Lesson: in `run: |` blocks every
+  line of embedded python needs the block indent; avoid heredocs entirely
+  (`python3 -c "..."` with single-quoted python strings).
+- **Root cause of the garbage symbolication (run 39605354391, `cd94535`,
+  secs=10):** the static step fed run-35 stack addresses (slid runtime
+  vmaddrs) straight to `ipsw dyld a2s` → hits on WeatherKit/
+  PodcastsFoundation/PassKitUI etc. and `not within any mapping` for the
+  0x1e3xxxxxx block. The kernel SMP lines give the boot-wide DSC slide:
+  `SMP SpringBoard[27] slide 0x1dbec000` (identical for every process in
+  that boot = shared-cache slide; `mh 0x102d28000` is SpringBoard's main
+  binary load addr, its own slide ≈ 0x2d28000).
+- **Fix (both symbolication steps):** parse `slide 0x...` from
+  `sweetlog.txt` (fallback `0x1dbec000`), subtract from each address, then
+  `ipsw dyld a2s` against the image DSC. Static step writes /tmp/unslid.txt
+  via `python3 -c`, loops a2s.
+- **Run 39605354391 (secs=10) QEMU step failure reason:** exit 1 from
+  `grep -aq 'exec SpringBoard' sweetlog.txt` (SpringBoard has not exec'd at
+  10 s); `result.json` said `no_panic_observed`. Harmless; the static steps
+  ran via `if: always()`. No .ips crash reports in the image (SpringBoard
+  never got that far in 10 s).
+- **In flight: run 39608828120 (`8c0ee08`, secs=10)** — rebuilds the image
+  and runs the corrected static symbolication (~20 min; job will still end
+  "failure" because of the exec-SpringBoard grep, that is expected). Next:
+  read the `slide=` + `== 0x...` outputs from the "Symbolicate known
+  SpringBoard crash stack" step, identify the `_loadBitmapForScreen` caller
+  chain, then implement the asset-manager fix (or the complex-bounding-path
+  bypass) and dispatch a 1200 s validation run (1000 s is too short to reach
+  the crash; run 37c).
+
 ### >>> UPDATE 2026-10-21 (night) - SpringBoard UI scene comes up with pruned apps + 0090, then aborts on missing UIKit bounding-path asset <<<
 
 **Commits:** `8cfffdb` (run 34 workflow/notes), `87bd3a9` (0090 + prune),
