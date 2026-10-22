@@ -124,6 +124,27 @@ def audio(root):
         print('StartRecorderServer off', os.path.relpath(conf, root))
 
 
+def motion_usage(root):
+    """SpringBoard aborts on first motion access (TCC wants NSMotionUsageDescription)."""
+    bundles = [
+        'System/Library/CoreServices/SpringBoard.app/Info.plist',
+        'Applications/PosterBoard.app/Info.plist',
+    ]
+    text = 'Allows SpringBoard and PosterBoard to read motion data for lock screen effects'
+    for rel in bundles:
+        path = os.path.join(root, rel)
+        if not os.path.exists(path):
+            print('warning: missing', rel)
+            continue
+        st = os.stat(path)
+        data = load(path)
+        if 'NSMotionUsageDescription' in data:
+            continue
+        data['NSMotionUsageDescription'] = text
+        save(path, data, st.st_uid, st.st_gid, st.st_mode & 0o7777)
+        print('motion usage', rel)
+
+
 def main():
     if len(sys.argv) != 2 or not os.path.isdir(os.path.join(sys.argv[1], 'System/Library/xpc')):
         sys.exit(__doc__)
@@ -132,6 +153,7 @@ def main():
     containers(root)
     activation(root)
     audio(root)
+    motion_usage(root)
     merge_pref(root, 'com.apple.migration', {
         'LastSystemVersion': BUILD,
         'DMUserDataDisposition': {'SyntheticDidUpgrade': False, 'buildVersion': BUILD}})

@@ -372,6 +372,9 @@ jobs:
           0x1e35d9428 0x1e3a174b8 0x1e36a902c 0x1e36a88c0 0x1e3a51af8
           0x1a6c9c6a0 0x1a6c9c350 0x1a6c9add0 0x1a6c9aa5c 0x1a6ce1184
           0x1a6ce0328 0x1a6cdffc4 0x1e34515e8 0x1c2210344
+          0x1c2a5e6c0 0x1c2a3fb48 0x1c2a3fb78 0x1c2710740 0x1c2710e2c
+          0x1c270c0d4 0x1c2710a50 0x1b5ba8780 0x1b5b7ca50 0x1c49c1b94
+          0x1c270d0b0 0x1b9c8adc8
           '''.split()
           for a in addrs:
               print(hex(int(a, 16) - slide))
@@ -548,7 +551,7 @@ jobs:
           cp qemu-out/fb.png qemu-out/fb.txt qemu-out/qemu.log qemu-out/regs.txt \
             qemu-out/result.json qemu-out/serial.txt \
             qemu-out/sweet_log_ring.bin qemu-out/sweet_log_total.bin stage-logs/ 2>/dev/null || true
-          cp qemu-out/fb-???s.png stage-logs/ 2>/dev/null || true
+          cp qemu-out/fb-[0-9]*s.png stage-logs/ 2>/dev/null || true
           echo "--- snapshot files ---"
           ls -la qemu-out/fb-*s.png 2>/dev/null || true
           for s in qemu-out/fb-*s.png; do
