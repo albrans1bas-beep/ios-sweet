@@ -548,9 +548,11 @@ jobs:
         if: always()
         run: |
           mkdir -p stage-logs
-          cp qemu-out/fb.png qemu-out/fb.txt qemu-out/qemu.log qemu-out/regs.txt \
+          cp qemu-out/fb.png qemu-out/fb.txt qemu-out/regs.txt \
             qemu-out/result.json qemu-out/serial.txt \
             qemu-out/sweet_log_ring.bin qemu-out/sweet_log_total.bin stage-logs/ 2>/dev/null || true
+          # The raw console log is >2 GB; gzip it so the artifact stays small.
+          gzip -9 -c qemu-out/qemu.log > stage-logs/qemu.log.gz 2>/dev/null || true
           cp qemu-out/fb-[0-9]*s.png stage-logs/ 2>/dev/null || true
           echo "--- snapshot files ---"
           ls -la qemu-out/fb-*s.png 2>/dev/null || true

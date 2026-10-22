@@ -2,6 +2,65 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-10-22 (later 6) - TCC fix landed (0 SpringBoard crashes); lock screen confirmed again at 1800 s in a 2700 s run; local Ubuntu builder in progress <<<
+
+**Commits:** `9a64e7b` (notes: lock screen reached), `c6c69a3`
+(`NSMotionUsageDescription` for SpringBoard/PosterBoard + new crash-address
+symbolication + stage every snapshot frame).
+
+- **Run 39702138823 (`c6c69a3`, 1800 s): the TCC abort is gone.**
+  `CRASH SpringBoard` count = **0**; the tweaks step logs
+  `motion usage System/Library/CoreServices/SpringBoard.app/Info.plist` and
+  `motion usage Applications/PosterBoard.app/Info.plist`; the DSC patch still
+  applies. Fix = `tools/sweet-root-tweaks.py::motion_usage()` adds
+  `NSMotionUsageDescription` to both Info.plists.
+- **But that run never drew the lock screen**: 300/600 s black
+  (`71a1fb6fd77d`), 900/1200 s kernel `SK[0]` text (`0c481b4798a7`), 1500/1800 s
+  the boot spinner (`1e30f37fff93`). The `Unbalanced calls ...
+  SBCoverSheetPrimarySlidingViewController` line is still there, so
+  SpringBoard creates the lock-screen controller but never commits a frame.
+  Reading: boot-duration variance, or a TCC prompt/wait path that stalls the
+  first CoverSheet presentation.
+- **Run 39707027351 (`c6c69a3`, secs=2700, snap_every=450): success, lock
+  screen confirmed at 1800 s** (`fb-1800s.png`, 40,390 B: red `Wednesday,
+  December 31` + red `4:29`, charging battery, camera button, home indicator).
+  1350 s was still kernel text, 2250/2700 s are the same lock screen dimmed.
+  => the lock screen needs roughly 20-30 min of guest time; a 1800 s budget is
+  marginal, use secs=2700 for lock-screen runs.
+- **Artifact size:** the staged `qemu.log` was 2.3-2.6 GB of raw console
+  output and dominated every download. `c6c69a3`+now gzip it to
+  `qemu.log.gz`; the local copies under `E:\ioslocal\run4*` were deleted after
+  extracting the frames (E: has 68 GB free).
+- **Local build path (Ubuntu noble cloud image) - status:**
+  - Seed: hand-built FAT12 CIDATA image (`E:\linuxvm\makefatseed.py` ->
+    `E:\linuxvm\seed_fat.img`). Builder bugs fixed: root volume-label entry
+    must be 32 bytes, LFN terminator `0000` + `ff` padding, **LFN checksum over
+    the 11-byte short name**, correct multi-chunk LFN order, and 8.3-only
+    names need no LFN entry. Seed carries `user-data`, `meta-data`, `build.sh`,
+    `tools.tgz` so the build needs no HTTP at all.
+  - A vvfat seed as the first IDE disk made SeaBIOS hang on "Booting from Hard
+    Disk..."; all disks are virtio now, cloud image first. QEMU 11 rejects
+    `boot=on/off` on `-drive`.
+  - `cloud-init` accepts the seed (`Datasource DataSourceNoCloud
+    [seed=/dev/vdb]`) and applies the hostname/key. The guest sometimes lands
+    in systemd emergency mode (`systemd-udevd.service` failure) - the serial
+    console gives a root shell there; a serial reconnect works after killing
+    only the driver, and SSH works via `hostfwd 127.0.0.1:2222 -> 22` with
+    `E:\linuxvm\id_ed25519`.
+  - **Transport:** the 7 GB of dmgs are attached read-only as virtio disks
+    (`vde` OS.dmg 4,730,814,044 B, `vdf` SystemOS.dmg 2,743,074,816 B, `vdg`
+    AppOS.dmg 10,485,760 B) and copied with `dd` into the work disk. The
+    previous HTTP transfer died with `curl: (56) Recv failure: Connection
+    reset by peer` on the 4.4 GB file; block-device `dd` reaches 8-58 MB/s.
+  - `E:\linuxvm\build2.sh` is the resume-capable build (skips already-copied
+    dmgs by exact size, then `mkiosroot.sh` -> `sweet-root-tweaks.py` ->
+    `patch-ios-dsc.py` -> `fsck.hfsplus` -> `BUILD_OK`).
+  - **Driver fix:** QEMU needs ~2-3 min to bind the serial socket on this
+    host; the driver's connect window was 30 s, which killed the VM at
+    startup. Now 900 tries.
+- **Next:** get the guest through cloud-init to `BUILD_OK`, then boot the
+  result locally with `tools/qemu-sweet.py --disk E:\ioslocal\rootfs.img`.
+
 ### >>> UPDATE 2026-10-21 (later 5) - LOCK SCREEN REACHED in QEMU (run 39668968848, `3f122eb`); next crash class: NSMotionUsageDescription TCC abort <<<
 
 **Commits:** `3f122eb` (keep PosterBoard, sample SpringBoard, block-device
