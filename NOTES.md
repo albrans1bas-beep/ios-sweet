@@ -27,34 +27,46 @@ resumable artifact download).
   ever presented. That image also spams `hfs: BlockMarkFreeInternal() ...
   unallocated blocks` / `hfs_mark_inconsistent` - it was corrupted by
   repeated SIGKILLed boots (no hfsprogs on this host to repair it).
-- **A freshly built image does NOT repro it.** rootfs run `45103312959`
-  (`keep_image=true`, 2700 s smoke boot, cpus=1) ended with SpringBoard
-  **alive** (pid 27, `SWEET PROC` dump), **0** hfs corruption lines, fsck
-  "appears to be OK" before and after, only `driverkitd` crashed (sig 9).
-  Conclusion: the nil-URL crash is a property of the local dirty volume,
-  **not** of the root image or of the virtio/QEMU layer. Re-downloading a
-  clean image is the fix; the rootfs workflow now also deletes
-  `com.apple.springboard.savedState` post-boot so an artifact can never
-  carry a half-written UIKit saved state into a user's QEMU run.
+- **A freshly built image does NOT repro it in CI, but DOES repro it here.**
+  rootfs run `45103312959` (`keep_image=true`, 2700 s smoke boot, cpus=1)
+  ended with SpringBoard **alive** (pid 27, `SWEET PROC` dump), **0** hfs
+  corruption lines, fsck "appears to be OK" before and after, only
+  `driverkitd` crashed (sig 9). So the dirty local volume was ruled out: the
+  clean image was downloaded (16,106,127,360 B, byte-exact), swapped in, and
+  booted in `D:\ios\run\out-clean` - **SpringBoard died with the identical
+  exception at ~300 s**. Do not trust "green on CI" for userland crashes: a
+  4 MiB ring may not carry the crash, and the final `SWEET PROC` dump shows
+  SpringBoard alive because launchd **relaunched** it (`exec SpringBoard`
+  appears twice).
+- **The crash is deterministic and slide-independent.** Unsliding both runs'
+  throw stacks (slides 0x4da54000 and 0x3da8000) gives byte-identical
+  addresses - same code path on every boot, on both images. Unslid frames:
+  `0x186df140c 0x1800cdc28 0x18119af10 0x18119aca0 0x18ddace8c 0x1b0d44410
+  0x1b0d4431c 0x1b0d573d4 0x1b0d571a8 ...`; `awdd` later dies with the same
+  shape, so the nil URL comes from shared UIKit/Foundation code. Resolution:
+  `.github/workflows/symbolicate.yml` (run `45215144772`) takes unslid
+  addresses + a rootfs run id, mounts that run's image on ubuntu and calls
+  `ipsw dyld a2s` - there is no HFS+ reader and no `ipsw` on this Windows
+  host, so symbolication has to happen on CI.
+- **The dirty local image** (`D:\ios\rootfs\rootfs-dirty.img`, kept aside)
+  additionally spams `hfs: BlockMarkFreeInternal() ... unallocated blocks`;
+  that part is real, it just is not the crash.
 - **`sweet-image.py` could not finish a transfer on this host**: the first
   attempt wedged at exactly 340 MiB, socket open, zero bytes/s - the same
   failure that killed `gh run download`. Now: Range request from the bytes
   already on disk, 60 s read timeout, fresh SAS URL per retry, retry budget
   (`8247941`). Verified resuming from 340 MiB -> 1.7 GiB.
-- **Running right now:** `python tools/sweet-image.py --run 45103312959 --out
-  D:\ios\rootfs\rootfs-new.img` (6.23 GB gz artifact, ~110 MB/min). The old
-  QEMU guest (old image) is still up on QMP `127.0.0.1:56625` with
-  `tools/sweet-view.py` attached; kill it before booting the new image,
-  because two QEMU processes must not hold the same HFS+ volume.
-- **Next concrete action:** when the download finishes, move `rootfs.img` to
-  `rootfs-dirty.img`, put the new image at `D:\ios\rootfs\rootfs.img`, then
-  `python tools/qemu-sweet.py D:/ios/run/payload.bin D:/ios/run/out-clean
-  --secs 2700 --snap-every 300 --disk D:/ios/rootfs/rootfs.img --kernel
-  D:/ios/kernel/kernel.development.sweet --dump-symbol
-  sweet_log_ring:0x400000 --dump-symbol sweet_log_total:8 --fail-on-panic`
-  (do not forget `--dump-symbol`: without it a killed run keeps no log) and
-  watch for `swap` frames past 3 and a composited lock screen; then inject a
-  touch with `tools/sweet-input.py`.
+- **Running right now:** the clean image (`D:/ios/rootfs/rootfs.img`, 15 GiB,
+  byte-exact from run 45103312959) boots in `D:/ios/run/out-clean` (QMP
+  endpoint in `out-clean/mon.txt`, live viewer attached, framebuffer + 4 MiB
+  log ring dumped every 300 s). It crashes SpringBoard the same way at ~300 s;
+  that log is the reference for the fix.
+- **Next concrete action:** read `resolved.txt` from symbolicate run
+  `45215144772`, pick the frames inside UIKitCore / Foundation /
+  FrontBoard, and find which `-initFileURLWithPath:` gets nil - i.e. the
+  caller that reads a path out of a plist or the environment. Fix that
+  path; the image is not the problem.
+
 
 ### >>> UPDATE 2026-11-23 - CI was blocked by retired runners, not by a queue; kernel rebuilding on macos-15-intel with patch 0091; rootfs image being rebuilt with keep_image for the Windows host <<<
 
