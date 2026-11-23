@@ -2,10 +2,42 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-11-23 (later night) - crash root cause narrowed; image corruption; 0092 kernel <<<
+
+- **0092 (virtio-input binds every device) is built and verified in the
+  guest**: `SWEET INPUT: virtio-input "QEMU Virtio Keyboard" at transport
+  29` AND `"QEMU Virtio Tablet" at transport 30`, both followed by the blk
+  probe - no panic. Touch and keys can now coexist.
+- **The 32-transport bug**: the ADT advertised a 0x20000 virtio-mmio window
+  but QEMU virt maps only 32 x 0x200 = 0x4000. A scan that runs past the
+  last transport reads unmapped phys and takes a synchronous external
+  abort. This panicked EVERY nodisk boot in `_sweet_vio_rootdev` (blk scan,
+  never noticed) and, once 0092 scanned past slot 31, the full boot too.
+  Fixed in 0092 (both scans capped at 32) and mkadt.py (0x4000).
+  Consequence: the earlier nodisk "touch does not arrive" tests were run on
+  panicked kernels - disregard them; the `--device sweetgpu` requirement
+  was still real (proven on the live out-clean guest).
+- **First-launch SpringBoard crash root cause narrowed**: the crash is in
+  `dispatch_once_callout -> +[SBWallpaperController sharedInstance] + 112`
+  (CI symbolicate run 45247815826). containermanagerd is exec'd AFTER
+  SpringBoard and, sampled at 600 s, sits idle in its run loop
+  (mach_msg/CFRunLoop) - so the first launch queries it while it is still
+  initializing, the lookup returns nil, SpringBoard aborts; the relaunch
+  finds it ready and reaches the lock screen. Our sandbox stand-in
+  (0050) returning ENOENT for op 4 (container path) forces the XPC
+  fallback, which is what races. Fix candidates: answer op 4 in the kernel,
+  or pre-warm containermanagerd. Not blocking: the relaunch path works.
+- **The clean image got corrupted again** by hard-killing QEMU with the
+  volume mounted (`hfs_mark_inconsistent` spam, daemon crash-looping, and
+  the power key no longer waking the panel). `qemu-sweet.py --overlay` now
+  boots through a throwaway qcow2 so the base image can never be dirtied;
+  use it for every local boot from now on.
+
 ### >>> UPDATE 2026-11-23 (night) - LOCK SCREEN COMPOSITED + TOUCH WORKING <<<
 
 **Milestones reached this session (all observed in a real boot of the clean
-image, `D:\iosun\out-live`):**
+image, `D:\ios
+un\out-live`):**
 
 1. **The lock screen composites.** After the deterministic first-launch
    SpringBoard crash (container lookup, see below), launchd relaunches it and
