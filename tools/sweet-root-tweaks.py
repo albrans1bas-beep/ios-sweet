@@ -145,6 +145,25 @@ def motion_usage(root):
         print('motion usage', rel)
 
 
+def saved_state(root):
+    """Drop SpringBoard's UIKit saved-application state.
+
+    SpringBoard restores this on launch with
+    -[NSURL initFileURLWithPath:] on a path read out of the archive. In QEMU a
+    half-written archive (we SIGKILL the guest) or one carrying a path that
+    only exists on the phone makes that a nil URL and SpringBoard dies with
+    NSInvalidArgumentException before it composites its root scene, which
+    shows up as a black screen with only kernel console text. It recreates the
+    archive on the next clean exit, so removing it is free.
+    """
+    base = os.path.join(root, 'private/var/mobile/Library/Saved Application State')
+    for name in ('com.apple.springboard.savedState', 'com.apple.springboard.csstore'):
+        path = os.path.join(base, name)
+        if os.path.isdir(path):
+            shutil.rmtree(path)
+            print('saved state removed', os.path.relpath(path, root))
+
+
 def main():
     if len(sys.argv) != 2 or not os.path.isdir(os.path.join(sys.argv[1], 'System/Library/xpc')):
         sys.exit(__doc__)
@@ -154,6 +173,7 @@ def main():
     activation(root)
     audio(root)
     motion_usage(root)
+    saved_state(root)
     merge_pref(root, 'com.apple.migration', {
         'LastSystemVersion': BUILD,
         'DMUserDataDisposition': {'SyntheticDidUpgrade': False, 'buildVersion': BUILD}})
