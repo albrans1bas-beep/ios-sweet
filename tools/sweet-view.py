@@ -94,7 +94,9 @@ class Input:
         ]
         if down is not None:
             events.append({'type': 'btn', 'data': {'down': down, 'button': 'left'}})
-        self.call('input-send-event', events=events)
+        # device=: QMP needs the graphics device that owns a QemuConsole
+        # (qemu-sweet.py --gpu); naming the tablet is rejected.
+        self.call('input-send-event', events=events, device='sweetgpu')
 
     def key(self, qcode):
         self.call('send-key', keys=[{'type': 'qcode', 'data': qcode}],

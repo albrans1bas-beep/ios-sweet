@@ -2,6 +2,70 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-11-23 (night) - LOCK SCREEN COMPOSITED + TOUCH WORKING <<<
+
+**Milestones reached this session (all observed in a real boot of the clean
+image, `D:\iosun\out-live`):**
+
+1. **The lock screen composites.** After the deterministic first-launch
+   SpringBoard crash (container lookup, see below), launchd relaunches it and
+   the SECOND instance reaches the lock screen: date line, large clock,
+   charging battery, camera shortcut, swipe-up indicator. `SWEET FB: swap`
+   climbs past 3 and keeps going (swap 21 observed), i.e. CoreAnimation is
+   presenting continuously - the earlier "only swap 2/3 then nothing" was the
+   crash, not a display bug.
+2. **The crash is deterministic and unrelated to the image.** Both the dirty
+   and the freshly downloaded clean image die with the identical
+   `NSInvalidArgumentException -[NSURL initFileURLWithPath:]` chain
+   `-[SBMainWorkspace start] -> +[SBCoverSheetPresentationManager
+   sharedInstance] -> +[SBWallpaperController init] ->
+   -[PBUIPosterViewController init] ->
+   +[PBUIPathProvider scopedSystemContainerForCurrentProcess] ->
+   -[BSSystemContainerForCurrentProcessPathProvider defaultPath]` returning
+   nil. Unsliding both runs (slides 0x4da54000 / 0x3da8000) gives identical
+   addresses. The `com.apple.springboard` system container DOES exist in the
+   image, so the lookup - not the container - is what fails. Still open.
+3. **Touch now works end to end.** Two separate host-side bugs had to be
+   fixed, both in tools/, no kernel change needed:
+   - **The kernel driver binds only ONE virtio-input device** (patch 0082
+     scans the mmio window and `break`s at the first `VDEV_ID_INPUT`).
+     With the tablet and the keyboard both attached the keyboard won and
+     touch was dead (`0 x SWEET INPUT: touch` for a whole boot, while
+     `SWEET HID: key 0x30` proved keys worked). Workaround:
+     `qemu-sweet.py --input tablet` attaches the tablet alone. Real fix
+     pending: the driver should keep one state per device.
+   - **QMP `input-send-event` does not take the input device.** Naming the
+     tablet fails with `Device sweettab (head 0) is not bound to a
+     QemuConsole`; with no device name the event is accepted and silently
+     dropped (`-nographic` gives QEMU no graphics console at all). The
+     event has to enter through a GRAPHICS device that owns a QemuConsole,
+     and QEMU then routes it to the guest's virtio-input device. Hence
+     `qemu-sweet.py --display egl-headless --gpu`
+     (`-device virtio-gpu-pci,id=sweetgpu`), and `--device sweetgpu` on
+     `sweet-input.py` / `sweet-view.py`. Verified:
+     `SWEET INPUT: touch down at 540,1200` / `touch up at 540,1200` in the
+     guest ring. `--vnc` alone was NOT enough.
+4. **Viewer hangs ("not responding") explained.** `tools/sweet-view.py`
+   does blocking QMP calls from a Tk callback, and the QMP chardev wedges if
+   a client is killed mid-command (observed: connections stuck in
+   `CloseWait`, every later client hanging). `qmp_session()` now sets a 20 s
+   socket timeout and raises instead of blocking forever. Still prefer a
+   clean exit over `taskkill` of anything holding QMP.
+
+**Commands that work now:**
+
+```
+python tools/qemu-sweet.py D:/ios/run/payload.bin D:/ios/run/out-live   --secs 2700 --snap-every 300 --input tablet --display egl-headless --gpu   --disk D:/ios/rootfs/rootfs.img --kernel D:/ios/kernel/kernel.development.sweet   --dump-symbol sweet_log_ring:0x400000 --dump-symbol sweet_log_total:8
+python tools/sweet-view.py --outdir D:/ios/run/out-live --fps 2 --scale 2
+python tools/sweet-input.py --mon tcp:127.0.0.1:PORT tap 540 1200
+```
+
+**Next:** (a) unlock with a bottom-edge swipe and see the home screen;
+(b) fix patch 0082 to drive several virtio-input devices at once;
+(c) keep chasing why `BSSystemContainerForCurrentProcessPathProvider` gets
+nil (the first-launch crash) - the relaunch masks it but it will bite every
+SpringBoard launch.
+
 ### >>> UPDATE 2026-11-23 (later) - virtio-input kernel is live in the guest; the black screen is a DIRTY IMAGE, not a userland bug; fresh image downloading <<<
 
 **Commits:** `f118dfc` (rootfs.yml + sweet-root-tweaks.py: clear SpringBoard

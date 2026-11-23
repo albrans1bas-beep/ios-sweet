@@ -127,6 +127,9 @@ def qmp_session(sock_path):
     else:
         s = socket.socket(socket.AF_UNIX)
         s.connect(sock_path)
+    # A wedged or busy QEMU must not block a caller (the live viewer) forever:
+    # time the call out instead so the UI stays responsive.
+    s.settimeout(20)
     f = s.makefile('rw')
     f.readline()
 
@@ -134,7 +137,10 @@ def qmp_session(sock_path):
         f.write(json.dumps({'execute': execute, 'arguments': args}) + '\n')
         f.flush()
         while True:
-            r = json.loads(f.readline())
+            line = f.readline()
+            if not line:
+                raise TimeoutError('QMP closed while waiting for ' + execute)
+            r = json.loads(line)
             if 'return' in r or 'error' in r:
                 return r
 
@@ -142,14 +148,21 @@ def qmp_session(sock_path):
     return s, call
 
 
-def send_input(sock_path, events):
+def send_input(sock_path, events, device='sweetgpu'):
     """QMP input-send-event (abs/btn/rel/key) to the guest's input devices.
 
     events: [{'type': 'abs', 'data': {'axis': 'x', 'value': v}}, ...]
+    device: the GRAPHICS device id owning a QemuConsole (qemu-sweet.py --gpu),
+    which is what QMP requires here -- naming the virtio-tablet instead fails
+    with 'Device ... is not bound to a QemuConsole'. Events entering through
+    the console are routed on to the guest's virtio-input device.
     Returns True when QEMU accepted the batch."""
     s, call = qmp_session(sock_path)
+    args = {'events': events}
+    if device:
+        args['device'] = device
     try:
-        r = call('input-send-event', events=events)
+        r = call('input-send-event', **args)
     finally:
         s.close()
     if 'error' in r:
@@ -251,6 +264,16 @@ def main():
     ap.add_argument('--hmp', action='append', default=[], help='extra monitor command run after stop (repeatable), e.g. "x /8gx 0xfffffe..."')
     ap.add_argument('--cpu', default='cortex-a76')	# ARMv8.2 like Kryo 470, same ID_AA64MMFR0
     ap.add_argument('--kernel', help='matching unstripped kernel, for exact framebuffer text decoding (uses llvm-nm)')
+    ap.add_argument('--display', choices=('sdl', 'gtk', 'egl-headless', 'none'), default=None,
+                    help='graphics backend instead of -nographic; gives QEMU a QemuConsole so a '
+                         'virtio-input device can be bound to it and driven by QMP')
+    ap.add_argument('--gpu', action='store_true',
+                    help='add virtio-gpu-pci,id=sweetgpu as an input injection entry point')
+    ap.add_argument('--vnc', nargs='?', const=1, type=int, default=None, metavar='DISPLAY',
+                    help='add a VNC console (127.0.0.1:DISPLAY) so pointer input has a handler; '
+                         'required for QMP touch injection under -nographic')
+    ap.add_argument('--input', choices=('both', 'tablet', 'keyboard'), default='both',
+                    help='which virtio-input device to attach (0082 binds only the first)')
     ap.add_argument('--disk', help='raw disk image appended as virtio-blk on the first virtio-mmio transport (0x0a000000, kernel 0082+)')
     ap.add_argument('--dump-symbol', action='append', default=[], metavar='NAME:SIZE',
                     help='at snapshot time pmemsave the kernel global NAME (SIZE bytes, 0x.. ok) to OUTDIR/NAME.bin; repeatable, requires --kernel')
@@ -316,8 +339,15 @@ def main():
     mem_size = struct.unpack_from('<Q', payload, 0x40)[0]
     ram_gib = max(4, -(-(phys_base + mem_size - 0x40000000) // (1 << 30)))
     qemu = find_qemu()
-    cmd = [qemu, '-M', 'virt,gic-version=3', '-cpu', a.cpu, '-smp', '1', '-m', f'{ram_gib}G',
-           '-nographic', '-nodefaults', '-serial', f'file:{q_out}/serial.txt', '-qmp', mon_arg,
+    display_args = ['-display', a.display] if a.display else ['-nographic']
+    cmd = [qemu, '-M', 'virt,gic-version=3', '-cpu', a.cpu, '-smp', '1', '-m', f'{ram_gib}G']
+    if a.gpu:
+        # QMP input-send-event targets a *graphics device* (console owner) and
+        # the console then routes the event to the guest's input device, so
+        # the emulated GPU exists purely as an injection entry point.
+        display_args += ['-device', 'virtio-gpu-pci,id=sweetgpu']
+    cmd += display_args + [
+           '-nodefaults', '-serial', f'file:{q_out}/serial.txt', '-qmp', mon_arg,
            '-d', 'int,guest_errors,unimp', '-D', f'{out}/qemu.log', '-no-reboot',
            '-device', f'loader,file={out}/ram.bin,addr={phys_base:#x},force-raw=on',
            '-device', f'loader,file={out}/stub.bin,addr={STUB_PA:#x},force-raw=on',
@@ -327,9 +357,24 @@ def main():
                 '-device', 'virtio-blk-device,drive=hd0']
     # Input: the guest polls these two virtio-mmio devices (patch 0082) and
     # turns them into HID events; sweet-view.py injects via QMP.
-    cmd += ['-device', 'virtio-tablet-device',
-            '-device', 'virtio-keyboard-device',
-            '-global', 'virtio-mmio.force-legacy=false']
+    # kernel 0082 binds only the FIRST virtio-input it finds in the mmio
+    # window, so attaching both means the keyboard wins and touch is dead.
+    # --input picks which one is present until the driver takes several.
+    want = a.input
+    if want in ('both', 'tablet'):
+        # the id is what QMP input-send-event targets: without a device name
+        # the event goes to a display handler and never reaches the guest.
+        cmd += ['-device', 'virtio-tablet-device,id=sweettab']
+    if want in ('both', 'keyboard'):
+        cmd += ['-device', 'virtio-keyboard-device']
+    cmd += ['-global', 'virtio-mmio.force-legacy=false']
+    if a.vnc is not None:
+        # -nographic/-nodefaults leaves QEMU with no graphics console, so
+        # QMP input-send-event has no handler for POINTER events and drops
+        # them (keyboards still work: send-key uses the text console). A VNC
+        # console exists only to give the input layer somewhere to route
+        # pointer events to; nothing reads the VNC stream.
+        cmd += ['-vnc', f'127.0.0.1:{a.vnc}']
     if a.gdb:
         cmd += ['-S', '-gdb', 'tcp::1234']
     print('RUN:', qemu, file=sys.stderr)

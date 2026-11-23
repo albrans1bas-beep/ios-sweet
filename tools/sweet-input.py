@@ -31,8 +31,9 @@ def parse_endpoint(text):
 
 
 class Touch:
-    def __init__(self, qs, ep):
+    def __init__(self, qs, ep, device=None):
         self.qs, self.sess = qs, qs.qmp_session(ep)
+        self.device = device
 
     def abs(self, x, y):
         return [
@@ -41,7 +42,10 @@ class Touch:
         ]
 
     def send(self, events):
-        r = self.sess[1]('input-send-event', events=events)
+        args = {'events': events}
+        if self.device:
+            args['device'] = self.device
+        r = self.sess[1]('input-send-event', **args)
         if 'error' in r:
             sys.exit(f'input-send-event: {r["error"]}')
         return r
@@ -69,6 +73,10 @@ class Touch:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--mon', help='QMP endpoint (default: OUTDIR/mon.txt)')
+    ap.add_argument('--device', default='sweetgpu',
+                    help='QMP device id to inject into: the graphics device that owns a '
+                         'QemuConsole (qemu-sweet.py --gpu, default sweetgpu). Naming the '
+                         'virtio-tablet fails with "not bound to a QemuConsole".')
     ap.add_argument('--outdir', default=r'D:\ios\run\out')
     ap.add_argument('--steps', type=int, default=12)
     ap.add_argument('--ms', type=int, default=16, help='delay between swipe points')
@@ -86,7 +94,7 @@ def main():
     ep = parse_endpoint(a.mon) if a.mon else parse_endpoint(
         open(os.path.join(a.outdir, 'mon.txt')).read())
     qs = load_qemu_sweet()
-    touch = Touch(qs, ep)
+    touch = Touch(qs, ep, a.device or None)
     if a.cmd == 'tap':
         print(f'tap {a.x},{a.y}')
         touch.tap(a.x, a.y)
