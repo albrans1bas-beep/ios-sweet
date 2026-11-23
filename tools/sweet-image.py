@@ -8,7 +8,7 @@ Picks the newest successful rootfs run that still has an unexpired
 into OUT (streaming, so the 15 GB image never needs a second copy on disk).
 Artifacts expire (3 days), so a rebuild is the fix when none is left.
 """
-import argparse, glob, json, os, shutil, subprocess, sys, tempfile, zlib
+import argparse, glob, json, os, shutil, subprocess, sys, zlib
 
 CHUNK = 1 << 22
 
@@ -66,6 +66,7 @@ def main():
     ap.add_argument('--run', type=int, help='rootfs run id (default: newest with an image)')
     ap.add_argument('--repo', help='OWNER/NAME (default: this repo)')
     ap.add_argument('--out', default=os.path.join('D:\\', 'ios', 'rootfs', 'rootfs.img'))
+    ap.add_argument('--tmp', help='download dir (default: <out dir>/dl; never the system temp)')
     ap.add_argument('--keep-gz', action='store_true')
     a = ap.parse_args()
     repo = a.repo or default_repo()
@@ -74,7 +75,8 @@ def main():
         sys.exit('no unexpired ios-rootfs artifact: dispatch rootfs.yml with keep_image=true')
     print(f'run {run}: ios-rootfs {size / 1e9:.2f} GB', flush=True)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
-    dl = tempfile.mkdtemp(prefix='ios-rootfs-')
+    dl = a.tmp or os.path.join(os.path.dirname(os.path.abspath(a.out)), 'dl')
+    os.makedirs(dl, exist_ok=True)
     try:
         r = gh('run', 'download', str(run), '--repo', repo, '-n', 'ios-rootfs', '-D', dl)
         if r.returncode:
