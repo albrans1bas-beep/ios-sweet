@@ -568,6 +568,9 @@ jobs:
           cp /tmp/newest.ips stage-logs/crash-newest.ips 2>/dev/null || true
           cp "$BIG"/payload.bin "$BIG"/sweet-qemu.adt stage-logs/ 2>/dev/null || true
           if [ "${{ inputs.keep_image }}" = "true" ]; then
+            # The smoke boot is SIGKILLed, so boot writes are unflushed: repair
+            # the volume before it is handed to a local QEMU (no hfsprogs there).
+            sudo fsck.hfsplus -f -y "$BIG"/rootfs.img || true
             gzip -1 "$BIG"/rootfs.img 2>/dev/null || true
           fi
           ls -la "$BIG"/rootfs.img.gz stage-logs 2>/dev/null || ls -la stage-logs
