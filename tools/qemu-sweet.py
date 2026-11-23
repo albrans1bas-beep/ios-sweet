@@ -270,6 +270,8 @@ def main():
         mon_arg = f'unix:{mon},server,nowait'
     if os.path.exists(mon):
         os.unlink(mon)
+    # Let host-side tools (tools/sweet-view.py) attach to the running guest.
+    open(f'{out}/mon.txt', 'w').write(mon_arg + '\n')
     # virt RAM starts at 0x40000000: cover the payload's RAM (mkadt.py --highmem needs 8G).
     mem_size = struct.unpack_from('<Q', payload, 0x40)[0]
     ram_gib = max(4, -(-(phys_base + mem_size - 0x40000000) // (1 << 30)))
