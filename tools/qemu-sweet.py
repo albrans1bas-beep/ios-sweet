@@ -153,6 +153,56 @@ def qmp(sock_path, *cmds, pmemsaves=()):
     return out
 
 
+def macho_symbols(path):
+    """Defined symbols of a little-endian Mach-O, for hosts without llvm-nm.
+
+    Returns {name: vmaddr}; names keep their leading underscore like nm output.
+    """
+    data = open(path, 'rb').read()
+    magic = data[:4]
+    if magic not in (b'\xcf\xfa\xed\xfe', b'\xce\xfa\xed\xfe'):
+        raise SystemExit(f'{path}: not a little-endian Mach-O file')
+    is64 = magic == b'\xcf\xfa\xed\xfe'
+    ncmds = struct.unpack_from('<I', data, 16)[0]
+    off, symtab = (32 if is64 else 28), None
+    for _ in range(ncmds):
+        cmd, cmdsize = struct.unpack_from('<II', data, off)
+        if cmd == 0x2:	# LC_SYMTAB
+            symtab = struct.unpack_from('<IIII', data, off + 8)
+        off += cmdsize
+    if not symtab:
+        raise SystemExit(f'{path}: no LC_SYMTAB (stripped kernel?)')
+    symoff, nsyms, stroff, _ = symtab
+    entsize = 16 if is64 else 12
+    symbols = {}
+    for i in range(nsyms):
+        base = symoff + i * entsize
+        n_strx, n_type = struct.unpack_from('<IB', data, base)
+        n_value = struct.unpack_from('<Q' if is64 else '<I', data, base + 8)[0]
+        if n_strx == 0 or (n_type & 0xe0) or (n_type & 0x0e) == 0:	# N_STAB / N_UNDF
+            continue
+        end = data.index(b'\0', stroff + n_strx)
+        symbols[data[stroff + n_strx:end].decode('utf-8', 'replace')] = n_value
+    return symbols
+
+
+def find_qemu(name='qemu-system-aarch64'):
+    """QEMU is not on PATH on a stock Windows install; probe the usual places."""
+    env = os.environ.get('QEMU_SYSTEM_AARCH64')
+    if env and os.path.exists(env):
+        return env
+    p = shutil.which(name)
+    if p:
+        return p
+    pf = os.environ.get('ProgramFiles', r'C:\Program Files')
+    for d in (os.path.join(pf, 'QEMU'), os.path.join(pf, 'qemu'),
+              r'C:\Program Files\QEMU', r'D:\QEMU', r'D:\qemu'):
+        for exe in (name + '.exe', name):
+            if os.path.exists(os.path.join(d, exe)):
+                return os.path.join(d, exe)
+    raise SystemExit(f'{name} not found: install QEMU or set QEMU_SYSTEM_AARCH64')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('payload'); ap.add_argument('outdir')
@@ -176,11 +226,14 @@ def main():
     font = None
     symbols = {}
     if a.kernel:
-        nm = subprocess.check_output(['llvm-nm', '--defined-only', a.kernel], text=True)
-        for line in nm.splitlines():
-            parts = line.split()
-            if len(parts) >= 3:
-                symbols[parts[-1]] = int(parts[0], 16)
+        nm = shutil.which('llvm-nm')
+        if nm:
+            for line in subprocess.check_output([nm, '--defined-only', a.kernel], text=True).splitlines():
+                parts = line.split()
+                if len(parts) >= 3:
+                    symbols[parts[-1]] = int(parts[0], 16)
+        else:
+            symbols = macho_symbols(a.kernel)	# Windows: no llvm-nm installed
         fonts = [va for name, va in symbols.items() if name == '_iso_font']
         if len(fonts) != 1:
             ap.error('kernel must contain exactly one _iso_font symbol')
@@ -220,7 +273,8 @@ def main():
     # virt RAM starts at 0x40000000: cover the payload's RAM (mkadt.py --highmem needs 8G).
     mem_size = struct.unpack_from('<Q', payload, 0x40)[0]
     ram_gib = max(4, -(-(phys_base + mem_size - 0x40000000) // (1 << 30)))
-    cmd = ['qemu-system-aarch64', '-M', 'virt,gic-version=3', '-cpu', a.cpu, '-smp', '1', '-m', f'{ram_gib}G',
+    qemu = find_qemu()
+    cmd = [qemu, '-M', 'virt,gic-version=3', '-cpu', a.cpu, '-smp', '1', '-m', f'{ram_gib}G',
            '-nographic', '-nodefaults', '-serial', f'file:{q_out}/serial.txt', '-qmp', mon_arg,
            '-d', 'int,guest_errors,unimp', '-D', f'{out}/qemu.log', '-no-reboot',
            '-device', f'loader,file={out}/ram.bin,addr={phys_base:#x},force-raw=on',
@@ -232,7 +286,7 @@ def main():
                 '-global', 'virtio-mmio.force-legacy=false']
     if a.gdb:
         cmd += ['-S', '-gdb', 'tcp::1234']
-    print('RUN:', shutil.which('qemu-system-aarch64'), 'path_ok:', 'QEMU' in os.environ['PATH'], file=sys.stderr)
+    print('RUN:', qemu, file=sys.stderr)
     p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL)
     if a.gdb:
         print('gdb stub on :1234; QMP socket:', mon, file=sys.stderr)
