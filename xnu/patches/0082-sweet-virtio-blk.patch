@@ -766,7 +766,7 @@ index 0000000..074ef4e
 +		}
 +	}
 +	if (!found) {
-+		sv.regs = NULL;
++		sv.regs = 0;	/* vm_offset_t: NULL is a void * and clang 16 rejects the conversion */
 +		printf("SWEET VIO: no virtio-mmio transport with a blk device found\n");
 +		return ENXIO;
 +	}
