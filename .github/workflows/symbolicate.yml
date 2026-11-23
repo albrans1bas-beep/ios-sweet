@@ -7,8 +7,8 @@ name: symbolicate
 #          no local HFS+ reader is needed on the developer's machine (there
 #          is none on Windows).
 #
-# The list is printed as `address dylib -> symbol + offset`, one per line, and
-# uploaded as resolved.txt. Nothing here modifies the image.
+# Results land in resolved.txt: "address | dylib path | symbol + offset".
+# Nothing here modifies the image.
 on:
   workflow_dispatch:
     inputs:
@@ -75,8 +75,6 @@ jobs:
             --jq '.artifacts[]|select(.name=="ios-rootfs")|.id' | head -1)
           echo "artifact $ID"
           [ -n "$ID" ] || { echo "no ios-rootfs artifact on run $RUN"; exit 1; }
-          # Stream the zip straight into gunzip: 6 GB zip, 15 GB image, and the
-          # runner must hold both plus the cache we are after.
           curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$ID/zip" \
             -o rootfs.zip
@@ -93,20 +91,19 @@ jobs:
 
       - name: Resolve
         run: |
-          set +e	# a2s returns non-zero for addresses outside the cache; that is normal
+          set +e
+          # xargs collapses the CRLF a Windows editor / --field leaves behind.
+          ADDRS=$(printf '%s' "${{ inputs.addrs }}" | xargs)
           CDIR=/mnt/ios/System/Library/Caches/com.apple.dyld
-          sudo ls -la "$CDIR" | head -20
-          DSC="$CDIR/dyld_shared_cache_arm64"
-          [ -f "$DSC" ] || DSC=$(sudo find /mnt/ios -name 'dyld_shared_cache_arm64' -type f | head -1)
-          echo "cache $DSC"
-          sudo cp -a "$CDIR"/dyld_shared_cache_arm64* /tmp/cache/ 2>/dev/null || {
-            mkdir -p /tmp/cache; sudo cp -a "$CDIR"/dyld_shared_cache_arm64* /tmp/cache/; }
+          sudo mkdir -p /tmp/cache
+          sudo cp -a "$CDIR"/dyld_shared_cache_arm64* /tmp/cache/
           DSCL=/tmp/cache/dyld_shared_cache_arm64
-          echo "local copy: $(ls /tmp/cache | wc -l) files, $(du -sh /tmp/cache | cut -f1)"
+          echo "cache files: $(ls /tmp/cache | wc -l), $(du -sh /tmp/cache | cut -f1)"
+          echo "addresses: $(printf '%s' "$ADDRS" | wc -w)"
           : > resolved.txt
           first=1
-          for a in ${{ inputs.addrs }}; do
-            if [ $first = 1 ]; then
+          for a in $ADDRS; do
+            if [ "$first" = 1 ]; then
               echo "=== verbose try for $a ==="
               ./bin/ipswbin dyld a2s "$DSCL" "$a" -d 2>&1 | head -12
               first=0
