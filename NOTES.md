@@ -2,6 +2,60 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-11-23 (later) - virtio-input kernel is live in the guest; the black screen is a DIRTY IMAGE, not a userland bug; fresh image downloading <<<
+
+**Commits:** `f118dfc` (rootfs.yml + sweet-root-tweaks.py: clear SpringBoard
+saved state, symbolicate this run's crash), `8247941` (sweet-image.py:
+resumable artifact download).
+
+- **Kernel CI `45096761764` (commit `8aa32ab`) is green** - the virtio-input
+  driver built. `kern,
+  (17,223,512 B, sha256 `8f371f77...`), downloaded to `D:\ios\kernel\`,
+  payload rebuilt at `D:\ios\run\payload.bin` (16,606,304 B).
+- **The input path works end to end in QEMU.** In the guest log:
+  `SWEET INPUT: virtio-input "QEMU Virtio Keyboard" at transport 29 ...
+  abs 0..32767 x 0..32767`, then `SWEET HID: SweetHIDTouch open by
+  IOHIDEventServiceUserClient -> 1` and the same for buttons: backboardd
+  opened both HID services. `tools/sweet-view.py` click -> QMP
+  input-send-event -> guest is confirmed (`touch down 592,178` on the host
+  side). First real input this guest has ever had.
+- **Observed on the OLD (dirty) local image `D:\ios\rootfs\rootfs.img`:**
+  SpringBoard dies at startup - `NSInvalidArgumentException
+  -[NSURL initFileURLWithPath:]: nil string parameter`, `CRASH
+  SpringBoard[27] sig 6`, then relaunch - so the panel only ever shows
+  kernel console text and `SWEET FB: swap 2`/`swap 3` are the last frames
+  ever presented. That image also spams `hfs: BlockMarkFreeInternal() ...
+  unallocated blocks` / `hfs_mark_inconsistent` - it was corrupted by
+  repeated SIGKILLed boots (no hfsprogs on this host to repair it).
+- **A freshly built image does NOT repro it.** rootfs run `45103312959`
+  (`keep_image=true`, 2700 s smoke boot, cpus=1) ended with SpringBoard
+  **alive** (pid 27, `SWEET PROC` dump), **0** hfs corruption lines, fsck
+  "appears to be OK" before and after, only `driverkitd` crashed (sig 9).
+  Conclusion: the nil-URL crash is a property of the local dirty volume,
+  **not** of the root image or of the virtio/QEMU layer. Re-downloading a
+  clean image is the fix; the rootfs workflow now also deletes
+  `com.apple.springboard.savedState` post-boot so an artifact can never
+  carry a half-written UIKit saved state into a user's QEMU run.
+- **`sweet-image.py` could not finish a transfer on this host**: the first
+  attempt wedged at exactly 340 MiB, socket open, zero bytes/s - the same
+  failure that killed `gh run download`. Now: Range request from the bytes
+  already on disk, 60 s read timeout, fresh SAS URL per retry, retry budget
+  (`8247941`). Verified resuming from 340 MiB -> 1.7 GiB.
+- **Running right now:** `python tools/sweet-image.py --run 45103312959 --out
+  D:\ios\rootfs\rootfs-new.img` (6.23 GB gz artifact, ~110 MB/min). The old
+  QEMU guest (old image) is still up on QMP `127.0.0.1:56625` with
+  `tools/sweet-view.py` attached; kill it before booting the new image,
+  because two QEMU processes must not hold the same HFS+ volume.
+- **Next concrete action:** when the download finishes, move `rootfs.img` to
+  `rootfs-dirty.img`, put the new image at `D:\ios\rootfs\rootfs.img`, then
+  `python tools/qemu-sweet.py D:/ios/run/payload.bin D:/ios/run/out-clean
+  --secs 2700 --snap-every 300 --disk D:/ios/rootfs/rootfs.img --kernel
+  D:/ios/kernel/kernel.development.sweet --dump-symbol
+  sweet_log_ring:0x400000 --dump-symbol sweet_log_total:8 --fail-on-panic`
+  (do not forget `--dump-symbol`: without it a killed run keeps no log) and
+  watch for `swap` frames past 3 and a composited lock screen; then inject a
+  touch with `tools/sweet-input.py`.
+
 ### >>> UPDATE 2026-11-23 - CI was blocked by retired runners, not by a queue; kernel rebuilding on macos-15-intel with patch 0091; rootfs image being rebuilt with keep_image for the Windows host <<<
 
 **Commits:** `d4eca6f` (xnu.yml -> macos-15-intel + patch 0091), `5bc1786`
