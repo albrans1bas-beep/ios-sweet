@@ -93,18 +93,28 @@ jobs:
 
       - name: Resolve
         run: |
-          set -o pipefail
+          set +e	# a2s returns non-zero for addresses outside the cache; that is normal
           CDIR=/mnt/ios/System/Library/Caches/com.apple.dyld
           sudo ls -la "$CDIR" | head -20
           DSC="$CDIR/dyld_shared_cache_arm64"
           [ -f "$DSC" ] || DSC=$(sudo find /mnt/ios -name 'dyld_shared_cache_arm64' -type f | head -1)
           echo "cache $DSC"
+          sudo cp -a "$CDIR"/dyld_shared_cache_arm64* /tmp/cache/ 2>/dev/null || {
+            mkdir -p /tmp/cache; sudo cp -a "$CDIR"/dyld_shared_cache_arm64* /tmp/cache/; }
+          DSCL=/tmp/cache/dyld_shared_cache_arm64
+          echo "local copy: $(ls /tmp/cache | wc -l) files, $(du -sh /tmp/cache | cut -f1)"
           : > resolved.txt
+          first=1
           for a in ${{ inputs.addrs }}; do
-            out=$(timeout 180 ./bin/ipswbin dyld a2s "$DSC" "$a" -d 2>&1 | head -4)
-            line="$a | $(echo "$out" | tr '\n' ' ' | sed 's/  */ /g')"
-            echo "$line" | tee -a resolved.txt
+            if [ $first = 1 ]; then
+              echo "=== verbose try for $a ==="
+              ./bin/ipswbin dyld a2s "$DSCL" "$a" -d 2>&1 | head -12
+              first=0
+            fi
+            out=$(timeout 300 ./bin/ipswbin dyld a2s "$DSCL" "$a" -d 2>&1 | head -4)
+            printf '%s | %s\n' "$a" "$(printf '%s' "$out" | tr '\n' ' ' | sed 's/  */ /g')" >> resolved.txt
           done
+          cat resolved.txt
           echo "--- unique dylibs hit ---"
           sed 's/.*dylib=\([^ ]*\).*/\1/' resolved.txt | sort | uniq -c | sort -rn | head -20
 
