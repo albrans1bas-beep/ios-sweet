@@ -62,6 +62,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Download the image artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           RUN="${{ inputs.run_id }}"
           if [ -z "$RUN" ]; then
@@ -75,7 +77,7 @@ jobs:
           [ -n "$ID" ] || { echo "no ios-rootfs artifact on run $RUN"; exit 1; }
           # Stream the zip straight into gunzip: 6 GB zip, 15 GB image, and the
           # runner must hold both plus the cache we are after.
-          curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+          curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$ID/zip" \
             -o rootfs.zip
           unzip -l rootfs.zip | head
