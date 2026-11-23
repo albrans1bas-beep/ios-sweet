@@ -38,10 +38,11 @@ permissions:
 
 jobs:
   build:
-    # macos-14 runner is not available on this account; macos-13 ships Xcode 15.x,
-    # matching the xnu-8796 IORPC ABI
-    # (Xcode 16's iig emits IORPC.kernelContent, which this xnu lacks)
-    runs-on: macos-13
+    # macos-13 (never offered Xcode 15 on this account) and macos-14 (retired
+    # 2026-11-02) are gone from GitHub-hosted runners. macos-15-intel is the
+    # oldest surviving x64 image, so the toolchain skew is handled in-tree:
+    # patch 0091 backports IORPC.kernelContent, which Xcode 16's iig emits.
+    runs-on: macos-15-intel
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
@@ -77,7 +78,22 @@ jobs:
         env:
           # keep going after errors so one run reports every compile failure
           MAKEFLAGS: ${{ inputs.keep_going == 'false' && '' || '-k' }}
-        run: bash build.sh
+        run: |
+          set -o pipefail
+          bash build.sh 2>&1 | tee build.log
+
+      - name: Summarize build errors
+        if: always()
+        working-directory: dxb
+        run: |
+          echo "--- toolchain ---"
+          xcodebuild -version || true
+          xcrun --find iig || true
+          ls -d /Applications/Xcode*.app || true
+          echo "--- error lines ---"
+          [ -f build.log ] || exit 0
+          grep -cE 'error:' build.log || true
+          grep -E 'error:|Error |FAILED|not found for architecture' build.log | sort -u | head -120 || true
 
       - name: Package build tree for local compiles
         if: always()
