@@ -150,9 +150,9 @@ diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
 -		}
 -		if (returned) {
 -			CleanPoC_DcacheRegion(vin.dma + VIN_OFF_AVAIL, 0x400);
--			vin_barrier();
--			*avail_idx = vin.avail;
  			vin_barrier();
+-			*avail_idx = vin.avail;
+-			vin_barrier();
 -			vin_wr(REG_QUEUE_NOTIFY, 0);
 +			FlushPoC_DcacheRegion(t->dma + VIN_OFF_USED,
 +				    0x400 + 8 * t->qsize);
@@ -187,7 +187,7 @@ diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
  		}
  		vin_wait();
  	}
-@@ -1016,108 +1040,129 @@
+@@ -1016,108 +1040,135 @@
  {
  	struct vdesc *desc;
  	thread_t thread;
@@ -200,10 +200,7 @@ diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
  	}
  	vin.running = true;
  
-+	/* Bind every virtio-input device in the window: QEMU attaches one
-+	 * -device per transport (tablet for touch, keyboard for the keys) and
-+	 * binding only the first one silently drops the rest. */
- 	for (uint32_t slot = 0; slot < window_size / VPOS_STRIDE; ++slot) {
+-	for (uint32_t slot = 0; slot < window_size / VPOS_STRIDE; ++slot) {
 -		vm_offset_t regs = ml_io_map(window_pa + slot * VPOS_STRIDE,
 -		    VPOS_STRIDE);
 -		if (*(volatile uint32_t *)(regs + REG_MAGIC) == VSIG_MAGIC &&
@@ -211,6 +208,16 @@ diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
 -		    *(volatile uint32_t *)(regs + REG_DEVICE_ID) == VDEV_ID_INPUT) {
 -			vin.regs = regs;
 -			found = (int)slot;
++	/* Bind every virtio-input device in the window: QEMU attaches one
++	 * -device per transport (tablet for touch, keyboard for the keys) and
++	 * binding only the first one silently drops the rest. QEMU virt has
++	 * exactly 32 transports; reading past the last one takes a synchronous
++	 * external abort, so never trust a larger window size. */
++	uint32_t slots = window_size / VPOS_STRIDE;
++	if (slots > 32) {
++		slots = 32;
++	}
++	for (uint32_t slot = 0; slot < slots; ++slot) {
 +		vm_offset_t regs;
 +		struct vin_transport *t;
 +
@@ -403,7 +410,7 @@ diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
  
  	if (kernel_thread_start(vin_thread, NULL, &thread) == KERN_SUCCESS) {
  		thread_deallocate(thread);
-@@ -1125,7 +1170,6 @@
+@@ -1125,7 +1176,6 @@
  		printf("SWEET INPUT: kernel_thread_start failed\n");
  	}
  }
@@ -411,3 +418,19 @@ diff --git a/bsd/dev/sweet_virtio.c b/bsd/dev/sweet_virtio.c
  static int
  sweet_vio_init(void)
  {
+@@ -1150,7 +1200,14 @@
+ 	 * for the virtio-blk signature rather than trusting a fixed slot.
+ 	 */
+ 	bool found = false;
+-	for (uint32_t slot = 0; slot < reg[1] / VPOS_STRIDE; ++slot) {
++	/* Same 32-transport cap as the input scan: past the last one the read
++	 * takes a synchronous external abort (this used to panic every nodisk
++	 * boot here). */
++	uint32_t bslots = (uint32_t)(reg[1] / VPOS_STRIDE);
++	if (bslots > 32) {
++		bslots = 32;
++	}
++	for (uint32_t slot = 0; slot < bslots; ++slot) {
+ 		sv.regs = ml_io_map(reg[0] + slot * VPOS_STRIDE, VPOS_STRIDE);
+ 		if (vio_rd(REG_MAGIC) == VSIG_MAGIC && vio_rd(REG_VERSION) == VERSION_MMIO &&
+ 		    vio_rd(REG_DEVICE_ID) == VDEV_ID_BLK) {

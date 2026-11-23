@@ -35,7 +35,10 @@ QEMU_VTIMER_INTID = 27
 # The whole virtio-mmio window on QEMU virt (32 transports of 0x200, first at
 # 0x0a000000): bsd/dev/sweet_virtio.c scans for the transport hosting
 # -device virtio-blk-device (QEMU decides the slot; it uses the last free bus).
-QEMU_VIRTIO, QEMU_VIRTIO_SIZE = 0x0a000000, 0x20000
+# The window is exactly 32 * 0x200 = 0x4000: reading past it takes a
+# synchronous external abort (observed as a kernel data abort in the scan
+# when a device was not found early), so do not round this up.
+QEMU_VIRTIO, QEMU_VIRTIO_SIZE = 0x0a000000, 0x4000
 
 BOOT_MANIFEST_HASH = hashlib.sha384(b'sweet boot manifest').digest()
 
