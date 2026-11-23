@@ -300,8 +300,13 @@ def main():
         time.sleep(0.2)
         if next_snap is not None and time.time() - t0 >= next_snap:
             buf = f'{out}/fb-snap.raw'
+            # Dump the kernel log ring with every snapshot: a run that is killed
+            # (server restart, crash) then still leaves a readable boot log.
+            saves = [(FB_BASE, FB_STRIDE * FB_H, buf)]
+            saves += [(va + phys_base - virt_base, size, f'{out}/{name}-{int(next_snap):03d}s.bin')
+                      for name, va, size in dumps]
             try:
-                qmp(mon, 'stop', pmemsaves=[(FB_BASE, FB_STRIDE * FB_H, buf)])
+                qmp(mon, 'stop', pmemsaves=saves)
                 qmp(mon, 'cont')
                 write_png(f'{out}/fb-{int(next_snap):03d}s.png', open(buf, 'rb').read())
                 print(f'snapshot fb-{int(next_snap):03d}s.png', file=sys.stderr)
