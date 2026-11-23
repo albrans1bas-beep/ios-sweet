@@ -11,10 +11,11 @@ it in one streaming pass: the 15 GB image is never duplicated on disk.
 host, and the API redirect is easy to follow with progress reporting.
 Artifacts expire (3 days), so a rebuild is the fix when none is left.
 """
-import argparse, json, os, subprocess, sys, urllib.error, urllib.request, zipfile, zlib
+import argparse, json, os, subprocess, sys, time, urllib.error, urllib.request, zipfile, zlib
 
 CHUNK = 1 << 22
 REPORT = 512 << 20	# progress line every 512 MB
+STALL_SECS = 60		# a read blocking this long means the transfer died
 
 
 def gh(*args):
@@ -60,8 +61,8 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None	# surface the 302 so the signed blob URL can be used bare
 
 
-def open_artifact(repo, artifact_id, tok):
-    """Return a readable stream for the artifact zip (follows the 302 by hand)."""
+def signed_url(repo, artifact_id, tok):
+    """The Azure SAS URL behind the API's 302 (no Authorization header)."""
     url = f'https://api.github.com/repos/{repo}/actions/artifacts/{artifact_id}/zip'
     req = urllib.request.Request(url, headers={
         'Authorization': f'Bearer {tok}',
@@ -69,27 +70,73 @@ def open_artifact(repo, artifact_id, tok):
         'User-Agent': 'sweet-image',
     })
     try:
-        return urllib.request.build_opener(NoRedirect).open(req)
+        with urllib.request.build_opener(NoRedirect).open(req) as r:
+            return r.geturl()	# 200 without a redirect: this URL is the blob itself
     except urllib.error.HTTPError as e:
         if e.code not in (301, 302, 303, 307, 308):
             sys.exit(f'artifact download failed: HTTP {e.code} {e.reason}')
-        loc = e.headers['Location']	# Azure blob SAS URL: no Authorization header
-        return urllib.request.urlopen(urllib.request.Request(loc, headers={'User-Agent': 'sweet-image'}))
+        return e.headers['Location']
 
 
-def stream_to_file(src, dest, total=0):
-    done = 0
-    with open(dest, 'wb') as fo:
-        while True:
-            chunk = src.read(CHUNK)
-            if not chunk:
-                break
-            fo.write(chunk)
-            done += len(chunk)
-            if done % REPORT < CHUNK:
-                pct = f' ({100 * done / total:.0f}%)' if total else ''
-                print(f'  {done / 1e9:.2f} GB{pct}', flush=True)
+def fetch_resumable(repo, art, tok, dest, tries=40):
+    """Download the artifact zip, resuming after a stall instead of restarting.
+
+    Multi-GB transfers to this host die silently (the socket stays open, no
+    bytes arrive), which is why `gh run download` was abandoned. So: a hard
+    socket timeout, a Range request from whatever is already on disk, and a
+    fresh signed URL each retry (the SAS token expires).
+    """
+    total = art['size_in_bytes']
+    done = os.path.getsize(dest) if os.path.exists(dest) else 0
+    if done > total:		# a previous attempt was a different artifact
+        os.unlink(dest)
+        done = 0
+    stalls = 0
+    shown = done
+    while done < total:
+        try:
+            url = signed_url(repo, art['id'], tok)
+            req = urllib.request.Request(url, headers={'User-Agent': 'sweet-image'})
+            if done:
+                req.add_header('Range', f'bytes={done}-')
+            with urllib.request.urlopen(req, timeout=STALL_SECS) as src:
+                if done and src.status != 206:
+                    # Range ignored: start over rather than append garbage.
+                    print('  server ignored Range, restarting', flush=True)
+                    done = 0
+                    mode = 'wb'
+                else:
+                    mode = 'ab' if done else 'wb'
+                with open(dest, mode) as fo:
+                    while done < total:
+                        chunk = src.read(CHUNK)
+                        if not chunk:
+                            break
+                        fo.write(chunk)
+                        done += len(chunk)
+                        if done - shown >= REPORT:
+                            shown = done
+                            print(f'  {done / 1e9:.2f} GB ({100 * done / total:.0f}%)', flush=True)
+        except Exception as e:	# noqa: BLE001 - any network error is retryable
+            stalls += 1
+            if stalls >= tries:
+                sys.exit(f'download gave up after {stalls} stalls at {done / 1e9:.2f} GB: {e}')
+            print(f'  stalled at {done / 1e9:.2f} GB ({e.__class__.__name__}); retry {stalls}/{tries}', flush=True)
+            time.sleep(3)
+            continue
+        if done < total:
+            stalls += 1
+            if stalls >= tries:
+                sys.exit(f'download gave up at {done / 1e9:.2f} GB (server closed early)')
+            print(f'  short read at {done / 1e9:.2f} GB; retry {stalls}/{tries}', flush=True)
+            time.sleep(3)
     return done
+
+
+def open_artifact(repo, artifact_id, tok):
+    """Return a readable stream for the artifact zip (follows the 302 by hand)."""
+    return urllib.request.urlopen(urllib.request.Request(
+        signed_url(repo, artifact_id, tok), headers={'User-Agent': 'sweet-image'}))
 
 
 def unpack_zip(zip_path, out):
@@ -137,7 +184,7 @@ def main():
     os.makedirs(dl, exist_ok=True)
     zip_path = os.path.join(dl, f'ios-rootfs-{run}.zip')
     print(f'downloading -> {zip_path}', flush=True)
-    n = stream_to_file(open_artifact(repo, art['id'], token()), zip_path, art['size_in_bytes'])
+    n = fetch_resumable(repo, art, token(), zip_path)
     print(f'  {n / 1e9:.2f} GB downloaded', flush=True)
     total = unpack_zip(zip_path, a.out)
     if not a.keep_zip:
