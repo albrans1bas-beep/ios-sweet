@@ -254,6 +254,14 @@ def find_qemu(name='qemu-system-aarch64'):
             if os.path.exists(os.path.join(d, exe)):
                 return os.path.join(d, exe)
     raise SystemExit(f'{name} not found: install QEMU or set QEMU_SYSTEM_AARCH64')
+def find_qemu_img():
+    exe = 'qemu-img.exe' if os.name == 'nt' else 'qemu-img'
+    local = os.path.join(os.path.dirname(find_qemu()), exe)
+    if os.path.exists(local):
+        return local
+    return exe
+
+
 
 
 def main():
@@ -274,6 +282,9 @@ def main():
                          'required for QMP touch injection under -nographic')
     ap.add_argument('--input', choices=('both', 'tablet', 'keyboard'), default='both',
                     help='which virtio-input device to attach (0082 binds only the first)')
+    ap.add_argument('--overlay', action='store_true',
+                    help='write through a throwaway qcow2 overlay so the base '
+                         'image survives hard kills (recommended for local boots)')
     ap.add_argument('--disk', help='raw disk image appended as virtio-blk on the first virtio-mmio transport (0x0a000000, kernel 0082+)')
     ap.add_argument('--dump-symbol', action='append', default=[], metavar='NAME:SIZE',
                     help='at snapshot time pmemsave the kernel global NAME (SIZE bytes, 0x.. ok) to OUTDIR/NAME.bin; repeatable, requires --kernel')
@@ -353,7 +364,20 @@ def main():
            '-device', f'loader,file={out}/stub.bin,addr={STUB_PA:#x},force-raw=on',
            '-device', f'loader,addr={STUB_PA:#x},cpu-num=0']
     if a.disk:
-        cmd += ['-drive', f'file={a.disk},format=raw,if=none,id=hd0',
+        disk = a.disk
+        if a.overlay:
+            # All guest writes land in a throwaway qcow2 overlay; the base
+            # image stays pristine no matter how the run ends. A hard-killed
+            # QEMU with a mounted, dirty HFS+ volume corrupts the image for
+            # good (no hfsprogs on this host to repair it), so every local
+            # boot should run on an overlay and delete it afterwards.
+            ov = f'{out}/rootfs-overlay.qcow2'
+            if os.path.exists(ov):
+                os.unlink(ov)
+            subprocess.run([find_qemu_img(), 'create', '-f', 'qcow2', '-F',
+                            'raw', '-b', disk, ov], check=True)
+            disk = ov
+        cmd += ['-drive', f'file={disk},format=raw,if=none,id=hd0',
                 '-device', 'virtio-blk-device,drive=hd0']
     # Input: the guest polls these two virtio-mmio devices (patch 0082) and
     # turns them into HID events; sweet-view.py injects via QMP.
