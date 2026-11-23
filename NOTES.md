@@ -9,7 +9,7 @@ saved state, symbolicate this run's crash), `8247941` (sweet-image.py:
 resumable artifact download).
 
 - **Kernel CI `45096761764` (commit `8aa32ab`) is green** - the virtio-input
-  driver built. `kern,
+  driver built. `kernel.development.sweet` in `kernel-latest` is that build
   (17,223,512 B, sha256 `8f371f77...`), downloaded to `D:\ios\kernel\`,
   payload rebuilt at `D:\ios\run\payload.bin` (16,606,304 B).
 - **The input path works end to end in QEMU.** In the guest log:
