@@ -20,8 +20,20 @@ on a stock Windows host).
   tees the build to `build.log` and prints unique `error:` lines, because
   `make -k` buries them in an ~8 min log.
 - **Run `45086301027`** (push of `d4eca6f`) started on `macos-15-intel` within
-  seconds - the runner label is real. First real Xcode-16/SDK-15 data point
-  comes from this run; expect further clang/SDK skew patches.
+  seconds - the runner label is real. **Result: the iig backport is enough.**
+  The build got past I/O Kit generation and failed on exactly one line, in our
+  own driver: `bsd/dev/sweet_virtio.c:751: sv.regs = NULL;` -
+  `-Wint-conversion` is an error in clang 16 (Xcode 15 only warned). Fixed in
+  0082 (`sv.regs = 0;`). No Apple source or SDK-15 error appeared at all.
+- **Run `45089508155` (`765f025`) GREEN in 14m15s.** `kernel-latest` now
+  carries `kernel.development.sweet` 17,223,392 B (2026-11-23T00:47:51Z) +
+  `SHA256SUMS`; downloaded to `D:\ios\kernel\`, payload rebuilt
+  (16,607,200 B) and verified booting without a disk (30 s,
+  `no_panic_observed`, 0 unknown glyphs).
+- **`gh run download` stalls on this host** (0 B/s for 40 min, no temp file,
+  no socket traffic). `tools/sweet-image.py` now streams the artifact zip
+  through the API 302 to the Azure blob URL and gunzips the single member in
+  one pass, so the 15 GB image is never duplicated on disk.
 - **The Oct runs are gone.** `gh api .../runs/39707027351/artifacts` =
   `total_count 0` (7-day retention), so the lock-screen image from the Oct 22
   success cannot be downloaded. The only surviving build product is the
@@ -47,12 +59,17 @@ on a stock Windows host).
   Without `--disk` the guest panics with a kernel data abort (far
   `0xfffffe1008b58000`) because `-nodefaults` leaves the virtio-mmio window
   unmapped - expected, not a regression.
-- **Next:** kernel run -> `kernel-latest` asset; rootfs run -> download
-  `rootfs.img.gz` to `D:\ios\rootfs\`, gunzip, then
+- **Next:** rootfs run `45086442700` succeeded (24m55s) and its
+  `ios-rootfs` artifact (6.22 GB) is being downloaded to
+  `D:\ios\rootfs\rootfs.img` (15 GiB image); the CI smoke boot in that run
+  mounted `vroot0`, ran `exec SpringBoard`/`exec backboardd` and the
+  post-boot `fsck -fy` left "The volume iOSRoot appears to be OK". Then boot
+  locally:
   `python tools/qemu-sweet.py D:\ios\run\payload.bin D:\ios\run\out --disk
-  D:\ios\rootfs\rootfs.img --secs 2700 --snap-every 450 --kernel
+  D:\ios\rootfs\rootfs.img --secs 3600 --snap-every 300 --kernel
   D:\ios\kernel\kernel.development.sweet --fail-on-panic`. Lock screen needs
-  ~1800 s of guest time, so keep secs=2700.
+  ~1800 s of guest time; this host is a 4-core i5-10300H under TCG, so budget
+  3600 s and read `out/fb-NNNs.png`.
 
 
 ### >>> UPDATE 2026-10-22 (later 6) - TCC fix landed (0 SpringBoard crashes); lock screen confirmed again at 1800 s in a 2700 s run; local Ubuntu builder in progress <<<
