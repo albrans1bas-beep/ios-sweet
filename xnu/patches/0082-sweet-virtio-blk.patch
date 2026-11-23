@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..074ef4e
 --- /dev/null
 +++ b/bsd/dev/sweet_virtio.c
-@@ -0,0 +1,836 @@
+@@ -0,0 +1,1249 @@
 +/*
 + * SWEET virtio (QEMU virt board): virtio-mmio transport + virtio-blk disk.
 + *
@@ -33,6 +33,9 @@ index 0000000..074ef4e
 + * The device appears as the BSD disk vroot0 (rvroot0) with the whole device
 + * as one partition; root on it with rd=vroot0 (IOFindBSDRoot). Reads and
 + * writes both work.
++ *
++ * The same window carries QEMU's virtio-input devices (tablet/keyboard/mouse),
++ * which are polled and turned into HID touch/key events for backboardd.
 + */
 +#if defined(ARM64_BOARD_CONFIG_SWEET)
 +#include <sys/param.h>
@@ -48,6 +51,7 @@ index 0000000..074ef4e
 +#include <miscfs/devfs/devfs.h>
 +#include <kern/locks.h>
 +#include <kern/clock.h>
++#include <kern/sched_prim.h>
 +#include <kern/task.h>
 +#include <kern/thread.h>
 +#include <arm/thread.h>
@@ -221,7 +225,7 @@ index 0000000..074ef4e
 +vio_transport_setup(void)
 +{
 +	/* magic/version/deviceId were verified by the transport scan in sweet_vio_init */
-+	printf("SWEET VIO: virtio-blk, vendor 0x%04x/n", vio_rd(REG_VENDOR_ID));
++	printf("SWEET VIO: virtio-blk, vendor 0x%04x\n", vio_rd(REG_VENDOR_ID));
 +
 +	/* reset */
 +	vio_wr(REG_STATUS, 0);
@@ -235,7 +239,7 @@ index 0000000..074ef4e
 +	/* negotiate VERSION_1 (page 1 of the 64-bit feature space) */
 +	vio_wr(REG_DEVICE_FEAT_SEL, 1);
 +	if (!(vio_rd(REG_DEVICE_FEATURES) & 1)) {
-+		printf("SWEET VIO: device does not offer VIRTIO_F_VERSION_1/n");
++		printf("SWEET VIO: device does not offer VIRTIO_F_VERSION_1\n");
 +		return ENXIO;
 +	}
 +	vio_wr(REG_DRIVER_FEAT_SEL, 1);
@@ -243,7 +247,7 @@ index 0000000..074ef4e
 +	vio_wr(REG_STATUS, VST_ACKNOWLEDGE | VST_DRIVER);
 +	vio_wr(REG_STATUS, VST_ACKNOWLEDGE | VST_DRIVER | VST_FEATURES_OK);
 +	if (!(vio_rd(REG_STATUS) & VST_FEATURES_OK)) {
-+		printf("SWEET VIO: FEATURES_OK rejected/n");
++		printf("SWEET VIO: FEATURES_OK rejected\n");
 +		return EIO;
 +	}
 +
@@ -251,11 +255,11 @@ index 0000000..074ef4e
 +	vio_wr(REG_QUEUE_SEL, 0);
 +	uint32_t max = vio_rd(REG_QUEUE_NUM_MAX);
 +	if (max < 8) {
-+		printf("SWEET VIO: empty queue (max %u)/n", max);
++		printf("SWEET VIO: empty queue (max %u)\n", max);
 +		return ENXIO;
 +	}
 +	if (max < VRING_SIZE) {
-+		printf("SWEET VIO: QueueNumMax %u < %u/n", max, VRING_SIZE);
++		printf("SWEET VIO: QueueNumMax %u < %u\n", max, VRING_SIZE);
 +		return ENXIO;
 +	}
 +	vio_wr(REG_QUEUE_NUM, VRING_SIZE);
@@ -272,11 +276,11 @@ index 0000000..074ef4e
 +
 +	sv.capacity = vio_rd64(REG_CONFIG);
 +	if (sv.capacity == 0) {
-+		printf("SWEET VIO: capacity is 0/n");
++		printf("SWEET VIO: capacity is 0\n");
 +		return ENXIO;
 +	}
 +
-+	printf("SWEET VIO: ring %u descriptors, capacity %llu sectors (%llu MiB)/n",
++	printf("SWEET VIO: ring %u descriptors, capacity %llu sectors (%llu MiB)\n",
 +	    VRING_SIZE, sv.capacity, sv.capacity >> 11);
 +	return 0;
 +}
@@ -358,14 +362,14 @@ index 0000000..074ef4e
 +		if (attempt == REQUEST_RETRIES) {
 +			printf("SWEET VIO: request timeout after %u attempts "
 +			    "(sector %llu type %u len %u: avail %u used %u "
-+			    "desc %llu/%u/%u/%u hdr %llx)/n",
++			    "desc %llu/%u/%u/%u hdr %llx)\n",
 +			    REQUEST_RETRIES + 1, sector, hdr->type, len,
 +			    (unsigned)AVAIL_IDX(sv.dma), (unsigned)USED_IDX(sv.dma),
 +			    desc[base].addr, desc[base].len, desc[base].flags,
 +			    desc[base].next, hdr->sector);
 +			return ETIMEDOUT;
 +		}
-+		printf("SWEET VIO: timeout, re-notifying (attempt %u)/n", attempt + 1);
++		printf("SWEET VIO: timeout, re-notifying (attempt %u)\n", attempt + 1);
 +		vio_wr(REG_QUEUE_NOTIFY, 0);
 +	}
 +	vio_sync_all(false);
@@ -375,13 +379,13 @@ index 0000000..074ef4e
 +	sv.seen_used++;
 +	/* reads carry the data plus the trailing status byte (len+1) */
 +	if (e.id != base || e.len > len + 1) {
-+		printf("SWEET VIO: bogus used element id %u len %u (want %u/%u)/n",
++		printf("SWEET VIO: bogus used element id %u len %u (want %u/%u)\n",
 +		    e.id, e.len, base, len);
 +		return EIO;
 +	}
 +	uint8_t resp = *(volatile uint8_t *)(sv.dma + OFF_RESP);
 +	if (resp != VB_RESP_OK) {
-+		printf("SWEET VIO: sector %llu %s failed (resp %u)/n",
++		printf("SWEET VIO: sector %llu %s failed (resp %u)\n",
 +		    sector, write ? "write" : "read", resp);
 +		return EIO;
 +	}
@@ -521,7 +525,7 @@ index 0000000..074ef4e
 +	uint8_t *full = kalloc_data(test_sz, Z_WAITOK | Z_ZERO);
 +	uint8_t *part = kalloc_data(test_sz, Z_WAITOK | Z_ZERO);
 +	if (!full || !part) {
-+		printf("SWEET VIO TEST: no memory/n");
++		printf("SWEET VIO TEST: no memory\n");
 +		return;
 +	}
 +	lck_mtx_lock(&sweet_vio_lock);
@@ -531,7 +535,7 @@ index 0000000..074ef4e
 +			continue;
 +		}
 +		if (vio_read_blocks(sec, full, test_sz / 512u)) {
-+			printf("SWEET VIO TEST: sector %llu read failed/n", sec);
++			printf("SWEET VIO TEST: sector %llu read failed\n", sec);
 +			fails++;
 +			continue;
 +		}
@@ -541,7 +545,7 @@ index 0000000..074ef4e
 +			checks++;
 +			for (uint32_t at = 0; at < test_sz; at += cs) {
 +				if (vio_read_blocks(sec + at / 512u, part + at, cs / 512u)) {
-+					printf("SWEET VIO TEST: sector %llu+%u read failed (chunk %u)/n",
++					printf("SWEET VIO TEST: sector %llu+%u read failed (chunk %u)\n",
 +					    sec, at, cs);
 +					fails++;
 +					break;
@@ -553,7 +557,7 @@ index 0000000..074ef4e
 +			for (uint32_t i = 0; i < test_sz; i++) {
 +				if (full[i] != part[i]) {
 +					printf("SWEET VIO TEST: sector %llu chunk %u byte %u "
-+					    "whole 0x%02x vs piece 0x%02x/n",
++					    "whole 0x%02x vs piece 0x%02x\n",
 +					    sec, cs, i, full[i], part[i]);
 +					fails++;
 +					break;
@@ -572,14 +576,14 @@ index 0000000..074ef4e
 +		if (vio_write_blocks(sec, part, test_sz / 512u) ||
 +		    vio_read_blocks(sec, full, test_sz / 512u) ||
 +		    memcmp(full, part, test_sz) != 0) {
-+			printf("SWEET VIO TEST: sector %llu write/readback failed/n", sec);
++			printf("SWEET VIO TEST: sector %llu write/readback failed\n", sec);
 +			fails++;
 +		}
 +	}
 +	lck_mtx_unlock(&sweet_vio_lock);
 +	kfree_data(full, test_sz);
 +	kfree_data(part, test_sz);
-+	printf("SWEET VIO TEST: level %u: %d checks, %d failures/n", level, checks, fails);
++	printf("SWEET VIO TEST: level %u: %d checks, %d failures\n", level, checks, fails);
 +}
 +
 +static void
@@ -734,6 +738,412 @@ index 0000000..074ef4e
 +	.d_type       = D_DISK,
 +};
 +
++/* ---- virtio-input: a real input path for QEMU -----------------------------
++ *
++ * QEMU's virtio-tablet-device / virtio-keyboard-device sit on the same
++ * virtio-mmio strap as the disk. The tablet reports absolute coordinates
++ * (EV_ABS ABS_X/ABS_Y + BTN_TOUCH), the mouse relative ones and the keyboard
++ * Linux key codes; all of it is forwarded to the HID services
++ * (sweet_hid_touch / sweet_hid_key) that backboardd already talks to. Only
++ * the event queue (queue 0) is used and it is polled from a kernel thread, so
++ * no interrupt wiring is needed.
++ */
++
++#define VDEV_ID_INPUT        18
++#define VIN_QSIZE            64
++#define VIN_EV_SIZE          8u
++#define VIN_OFF_DESC         0x0000
++#define VIN_OFF_AVAIL        0x0400
++#define VIN_OFF_USED         0x0800
++#define VIN_OFF_EVENTS       0x1000
++#define VIN_DMA_SIZE         0x2000
++
++#define VIN_CFG_ID_NAME      1
++#define VIN_CFG_ABS_INFO     4
++#define VIN_EV_SYN           0
++#define VIN_EV_KEY           1
++#define VIN_EV_REL           2
++#define VIN_EV_ABS           3
++#define VIN_SYN_REPORT       0
++#define VIN_ABS_X            0
++#define VIN_ABS_Y            1
++#define VIN_REL_X            0
++#define VIN_REL_Y            1
++#define VIN_BTN_LEFT         0x110
++#define VIN_BTN_TOUCH        0x14a
++#define VIN_KEY_HOME         102
++#define VIN_KEY_HOMEPAGE     172
++#define VIN_KEY_POWER        116
++#define VIN_KEY_VOLUMEUP     115
++#define VIN_KEY_VOLUMEDOWN   114
++#define VIN_PANEL_W          1080
++#define VIN_PANEL_H          2400
++#define VIN_REL_STEP         8
++
++struct vin_event {
++	uint16_t type;
++	uint16_t code;
++	uint32_t value;
++} __attribute__((packed));
++
++static struct {
++	vm_offset_t regs;
++	vm_offset_t dma;
++	uint64_t dma_pa;
++	uint32_t qsize;
++	uint16_t avail;
++	uint16_t seen;
++	int32_t amin[2], amax[2];
++	int x, y;
++	bool touch, moved, changed;
++	bool running, ready;
++	uint32_t events, keys, flushes;
++	uint32_t last_type, last_code, last_value;
++	char name[32];
++} vin;
++
++static int vin_sleep_chan;
++
++extern void sweet_hid_key(int key, int down);
++extern void sweet_hid_touch(int finger, int down, int x, int y);
++void sweet_input_start(uintptr_t window_pa, uint32_t window_size);
++
++static inline uint32_t
++vin_rd(uint32_t off)
++{
++	return *(volatile uint32_t *)(vin.regs + off);
++}
++
++static inline void
++vin_wr(uint32_t off, uint32_t v)
++{
++	*(volatile uint32_t *)(vin.regs + off) = v;
++}
++
++static inline void
++vin_barrier(void)
++{
++	__builtin_arm_dsb(0xf);
++}
++
++static void
++vin_read_name(void)
++{
++	volatile uint8_t *cfg = (volatile uint8_t *)(vin.regs + REG_CONFIG);
++	uint32_t n;
++
++	cfg[0] = VIN_CFG_ID_NAME;
++	cfg[1] = 0;
++	n = cfg[2];
++	if (n >= sizeof(vin.name)) {
++		n = sizeof(vin.name) - 1;
++	}
++	for (uint32_t i = 0; i < n; i++) {
++		vin.name[i] = (char)cfg[8 + i];
++	}
++	vin.name[n] = 0;
++}
++
++static void
++vin_read_abs(void)
++{
++	volatile uint8_t *cfg = (volatile uint8_t *)(vin.regs + REG_CONFIG);
++
++	for (int axis = 0; axis < 2; axis++) {
++		cfg[0] = VIN_CFG_ABS_INFO;
++		cfg[1] = (uint8_t)axis;
++		vin.amin[axis] = (int32_t)*(volatile uint32_t *)(cfg + 8);
++		vin.amax[axis] = (int32_t)*(volatile uint32_t *)(cfg + 12);
++		if (vin.amax[axis] <= vin.amin[axis]) {
++			vin.amin[axis] = 0;
++			vin.amax[axis] = 0x7fff;
++		}
++	}
++}
++
++static int
++vin_scale(uint32_t value, int axis)
++{
++	int64_t lo = vin.amin[axis], hi = vin.amax[axis];
++	int64_t span = hi - lo;
++	int64_t t = (int64_t)value - lo;
++
++	if (span <= 0) {
++		return axis ? VIN_PANEL_H / 2 : VIN_PANEL_W / 2;
++	}
++	if (t < 0) {
++		t = 0;
++	}
++	if (t > span) {
++		t = span;
++	}
++	return (int)((t * (axis ? VIN_PANEL_H : VIN_PANEL_W)) / span);
++}
++
++/* One touch event per SYN_REPORT, like a real digitizer. */
++static void
++vin_flush(void)
++{
++	bool send = vin.changed || (vin.touch && vin.moved);
++
++	if (vin.x < 0) {
++		vin.x = 0;
++	}
++	if (vin.x > VIN_PANEL_W - 1) {
++		vin.x = VIN_PANEL_W - 1;
++	}
++	if (vin.y < 0) {
++		vin.y = 0;
++	}
++	if (vin.y > VIN_PANEL_H - 1) {
++		vin.y = VIN_PANEL_H - 1;
++	}
++	if (send) {
++		printf("SWEET INPUT: touch %s at %d,%d\n", vin.touch ? "down" : "up",
++		    vin.x, vin.y);
++		sweet_hid_touch(0, vin.touch ? 1 : 0, vin.x, vin.y);
++		vin.flushes++;
++	}
++	vin.changed = false;
++	vin.moved = false;
++}
++
++static void
++vin_event(uint16_t type, uint16_t code, uint32_t value)
++{
++	vin.events++;
++	vin.last_type = type;
++	vin.last_code = code;
++	vin.last_value = value;
++
++	switch (type) {
++	case VIN_EV_KEY:
++		switch (code) {
++		case VIN_BTN_TOUCH:
++		case VIN_BTN_LEFT:
++			vin.touch = value != 0;
++			vin.changed = true;
++			break;
++		case VIN_KEY_HOME:
++		case VIN_KEY_HOMEPAGE:
++			sweet_hid_key(3, value != 0);
++			vin.keys++;
++			break;
++		case VIN_KEY_POWER:
++			sweet_hid_key(0, value != 0);
++			vin.keys++;
++			break;
++		case VIN_KEY_VOLUMEUP:
++			sweet_hid_key(1, value != 0);
++			vin.keys++;
++			break;
++		case VIN_KEY_VOLUMEDOWN:
++			sweet_hid_key(2, value != 0);
++			vin.keys++;
++			break;
++		default:
++			break;
++		}
++		break;
++	case VIN_EV_ABS:
++		if (code == VIN_ABS_X) {
++			vin.x = vin_scale(value, 0);
++			vin.moved = true;
++		} else if (code == VIN_ABS_Y) {
++			vin.y = vin_scale(value, 1);
++			vin.moved = true;
++		}
++		break;
++	case VIN_EV_REL:
++		if (code == VIN_REL_X) {
++			vin.x += (int)value * VIN_REL_STEP;
++			vin.moved = true;
++		} else if (code == VIN_REL_Y) {
++			vin.y += (int)value * VIN_REL_STEP;
++			vin.moved = true;
++		}
++		break;
++	case VIN_EV_SYN:
++		if (code == VIN_SYN_REPORT) {
++			vin_flush();
++		}
++		break;
++	default:
++		break;
++	}
++}
++
++static void
++vin_wait(void)
++{
++	uint64_t deadline;
++
++	clock_interval_to_deadline(10, NSEC_PER_MSEC, &deadline);
++	(void)assert_wait_deadline(&vin_sleep_chan, THREAD_UNINT, deadline);
++	thread_block(THREAD_CONTINUE_NULL);
++}
++
++static void
++vin_thread(void *arg, wait_result_t result)
++{
++	volatile uint16_t *avail_idx = (volatile uint16_t *)(vin.dma + VIN_OFF_AVAIL + 2);
++	volatile uint16_t *avail_ring = (volatile uint16_t *)(vin.dma + VIN_OFF_AVAIL + 4);
++	volatile uint16_t *used_idx = (volatile uint16_t *)(vin.dma + VIN_OFF_USED + 2);
++	(void)arg;
++	(void)result;
++
++	for (;;) {
++		bool returned = false;
++		uint16_t used;
++
++		vin_barrier();
++		FlushPoC_DcacheRegion(vin.dma + VIN_OFF_USED, 0x400 + 8 * vin.qsize);
++		FlushPoC_DcacheRegion(vin.dma + VIN_OFF_EVENTS, VIN_EV_SIZE * vin.qsize);
++		used = *used_idx;
++		while (vin.seen != used) {
++			struct vring_used_elem *e = (struct vring_used_elem *)
++			    (vin.dma + VIN_OFF_USED + 4 + 8 * (vin.seen % vin.qsize));
++			uint16_t id = (uint16_t)e->id;
++			struct vin_event ev;
++
++			vin.seen++;
++			if (id >= vin.qsize) {
++				printf("SWEET INPUT: bogus used id %u\n", id);
++				continue;
++			}
++			ev = *(struct vin_event *)(vin.dma + VIN_OFF_EVENTS +
++			    id * VIN_EV_SIZE);
++			vin_event(ev.type, ev.code, ev.value);
++			avail_ring[vin.avail % vin.qsize] = id;
++			vin.avail++;
++			returned = true;
++		}
++		if (returned) {
++			CleanPoC_DcacheRegion(vin.dma + VIN_OFF_AVAIL, 0x400);
++			vin_barrier();
++			*avail_idx = vin.avail;
++			vin_barrier();
++			vin_wr(REG_QUEUE_NOTIFY, 0);
++		}
++		vin_wait();
++	}
++}
++
++void
++sweet_input_start(uintptr_t window_pa, uint32_t window_size)
++{
++	struct vdesc *desc;
++	thread_t thread;
++	int found = -1;
++	uint32_t max;
++
++	if (vin.running) {
++		return;
++	}
++	vin.running = true;
++
++	for (uint32_t slot = 0; slot < window_size / VPOS_STRIDE; ++slot) {
++		vm_offset_t regs = ml_io_map(window_pa + slot * VPOS_STRIDE,
++		    VPOS_STRIDE);
++		if (*(volatile uint32_t *)(regs + REG_MAGIC) == VSIG_MAGIC &&
++		    *(volatile uint32_t *)(regs + REG_VERSION) == VERSION_MMIO &&
++		    *(volatile uint32_t *)(regs + REG_DEVICE_ID) == VDEV_ID_INPUT) {
++			vin.regs = regs;
++			found = (int)slot;
++			break;
++		}
++	}
++	if (found < 0) {
++		vin.regs = 0;
++		printf("SWEET INPUT: no virtio-input device in the mmio window\n");
++		return;
++	}
++
++	vin_wr(REG_STATUS, 0);
++	while (vin_rd(REG_STATUS)) {
++		delay(10);
++	}
++	vin_wr(REG_STATUS, VST_ACKNOWLEDGE);
++	vin_wr(REG_STATUS, VST_ACKNOWLEDGE | VST_DRIVER);
++	vin_wr(REG_DEVICE_FEAT_SEL, 1);
++	if (!(vin_rd(REG_DEVICE_FEATURES) & 1)) {
++		printf("SWEET INPUT: device does not offer VIRTIO_F_VERSION_1\n");
++		return;
++	}
++	vin_wr(REG_DRIVER_FEAT_SEL, 1);
++	vin_wr(REG_DRIVER_FEATURES, 1);
++	vin_wr(REG_STATUS, VST_ACKNOWLEDGE | VST_DRIVER | VST_FEATURES_OK);
++	if (!(vin_rd(REG_STATUS) & VST_FEATURES_OK)) {
++		printf("SWEET INPUT: FEATURES_OK rejected\n");
++		return;
++	}
++
++	vin_wr(REG_QUEUE_SEL, 0);
++	max = vin_rd(REG_QUEUE_NUM_MAX);
++	if (max < 8) {
++		printf("SWEET INPUT: queue max %u too small\n", max);
++		return;
++	}
++	vin.qsize = VIN_QSIZE;
++	while (vin.qsize > max) {
++		vin.qsize >>= 1;
++	}
++
++	if (kmem_alloc_contig(kernel_map, &vin.dma, VIN_DMA_SIZE, PAGE_MASK, 0, 0,
++	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++		printf("SWEET INPUT: no contiguous DMA memory\n");
++		return;
++	}
++	ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)vin.dma);
++	if (!pn) {
++		printf("SWEET INPUT: no physical address for the ring\n");
++		return;
++	}
++	vin.dma_pa = ptoa_64(pn);
++
++	vin_read_name();
++	vin_read_abs();
++
++	desc = (struct vdesc *)(vin.dma + VIN_OFF_DESC);
++	for (uint32_t i = 0; i < vin.qsize; i++) {
++		desc[i].addr = vin.dma_pa + VIN_OFF_EVENTS + i * VIN_EV_SIZE;
++		desc[i].len = VIN_EV_SIZE;
++		desc[i].flags = VRING_DESC_F_WRITE;
++		desc[i].next = 0;
++		((uint16_t *)(vin.dma + VIN_OFF_AVAIL + 4))[i] = (uint16_t)i;
++	}
++	vin.avail = (uint16_t)vin.qsize;
++	vin.seen = 0;
++	*(volatile uint16_t *)(vin.dma + VIN_OFF_AVAIL) = 0;
++	*(volatile uint16_t *)(vin.dma + VIN_OFF_AVAIL + 2) = vin.avail;
++	CleanPoC_DcacheRegion(vin.dma, VIN_DMA_SIZE);
++	vin_barrier();
++
++	vin_wr(REG_QUEUE_NUM, vin.qsize);
++	vin_wr(REG_QUEUE_READY, 0);
++	vin_wr(REG_QUEUE_DESC_LO, (uint32_t)(vin.dma_pa + VIN_OFF_DESC));
++	vin_wr(REG_QUEUE_DESC_HI, (uint32_t)((vin.dma_pa + VIN_OFF_DESC) >> 32));
++	vin_wr(REG_QUEUE_AVAIL_LO, (uint32_t)(vin.dma_pa + VIN_OFF_AVAIL));
++	vin_wr(REG_QUEUE_AVAIL_HI, (uint32_t)((vin.dma_pa + VIN_OFF_AVAIL) >> 32));
++	vin_wr(REG_QUEUE_USED_LO, (uint32_t)(vin.dma_pa + VIN_OFF_USED));
++	vin_wr(REG_QUEUE_USED_HI, (uint32_t)((vin.dma_pa + VIN_OFF_USED) >> 32));
++	vin_wr(REG_QUEUE_READY, 1);
++	vin_wr(REG_STATUS, VST_ACKNOWLEDGE | VST_DRIVER | VST_FEATURES_OK |
++	    VST_DRIVER_OK);
++	vin.ready = true;
++
++	printf("SWEET INPUT: virtio-input \"%s\" at transport %d (%#x), queue %u, "
++	    "abs %d..%d x %d..%d\n", vin.name, found,
++	    (uint32_t)(window_pa + (uint32_t)found * VPOS_STRIDE), vin.qsize,
++	    vin.amin[0], vin.amax[0], vin.amin[1], vin.amax[1]);
++
++	if (kernel_thread_start(vin_thread, NULL, &thread) == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	} else {
++		printf("SWEET INPUT: kernel_thread_start failed\n");
++	}
++}
++
 +static int
 +sweet_vio_init(void)
 +{
@@ -748,6 +1158,9 @@ index 0000000..074ef4e
 +		printf("SWEET VIO: no /sweet-virtio node in the device tree\n");
 +		return ENXIO;
 +	}
++
++	/* Input first: it works even if no disk is attached (sweetfb test). */
++	sweet_input_start((uintptr_t)reg[0], (uint32_t)reg[1]);
 +
 +	/*
 +	 * The ADT gives the whole virtio-mmio window; QEMU picks which of the
@@ -772,7 +1185,7 @@ index 0000000..074ef4e
 +	}
 +	if (kmem_alloc_contig(kernel_map, &sv.dma, DMA_SIZE, PAGE_MASK, 0, 0,
 +	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
-+		printf("SWEET VIO: no contiguous DMA memory/n");
++		printf("SWEET VIO: no contiguous DMA memory\n");
 +		return ENOMEM;
 +	}
 +	ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)sv.dma);
@@ -831,7 +1244,7 @@ index 0000000..074ef4e
 +	devfs_make_node(sv.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "vroot0");
 +	devfs_make_node(makedev(sv.cmajor, 0), DEVFS_CHAR, UID_ROOT, GID_OPERATOR, 0640, "rvroot0");
 +	sv.ready = true;
-+	printf("SWEET VIO: disk vroot0 (%llu MiB, %s)/n",
++	printf("SWEET VIO: disk vroot0 (%llu MiB, %s)\n",
 +	    sv.capacity >> 11, sv.writable ? "read/write" : "read-only");
 +	return 0;
 +}

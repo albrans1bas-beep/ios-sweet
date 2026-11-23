@@ -8,6 +8,9 @@ so a live view is a QMP pmemsave loop, not a QEMU display device. qemu-sweet.py
 writes the monitor endpoint to OUTDIR/mon.txt; --mon overrides it.
 
 Keys in the window:  s  save a PNG next to OUTDIR     q / Esc  quit
+                     h  Home button    p  power     +/-  volume
+Mouse: click and drag on the picture is a touch in the guest (the guest polls
+QEMU's virtio-tablet/keyboard, patch 0082, and turns it into HID events).
 Without tkinter it still works headless: frames are written as PNG on change.
 
 Everything here is read-only against the guest: stop/pmemsave/cont, so the
@@ -53,6 +56,59 @@ def grab(qs, ep, raw_path):
     return open(raw_path, 'rb').read()
 
 
+AXIS_MAX = 0x7fff	# QEMU tablet axis range; the guest scales it to the panel
+
+
+class Input:
+    """Forward window clicks/keys to the guest through QMP.
+
+    The guest has no USB/PS2 controller: qemu-sweet.py attaches
+    virtio-tablet-device + virtio-keyboard-device, the kernel polls them
+    (patch 0082) and feeds backboardd's HID services."""
+
+    def __init__(self, qs, ep):
+        self.qs, self.ep, self.sess, self.down = qs, ep, None, False
+
+    def call(self, execute, **args):
+        try:
+            if self.sess is None:
+                self.sess = self.qs.qmp_session(self.ep)
+            r = self.sess[1](execute, **args)
+        except Exception as e:
+            print(f'input failed: {type(e).__name__}: {e}', flush=True)
+            self.sess = None
+            return None
+        if 'error' in r:
+            print(f'input {execute}: {r["error"]}', flush=True)
+            self.sess = None
+        return r
+
+    def touch(self, x, y, down=None):
+        if down is not None:
+            self.down = down
+        events = [
+            {'type': 'abs', 'data': {'axis': 'x',
+                                     'value': int(x * AXIS_MAX / (self.qs.FB_W - 1))}},
+            {'type': 'abs', 'data': {'axis': 'y',
+                                     'value': int(y * AXIS_MAX / (self.qs.FB_H - 1))}},
+        ]
+        if down is not None:
+            events.append({'type': 'btn', 'data': {'down': down, 'button': 'left'}})
+        self.call('input-send-event', events=events)
+
+    def key(self, qcode):
+        self.call('send-key', keys=[{'type': 'qcode', 'data': qcode}],
+                  **{'hold-time': 100})
+
+    def close(self):
+        if self.sess:
+            try:
+                self.sess[0].close()
+            except OSError:
+                pass
+            self.sess = None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--mon', help='QMP endpoint (default: OUTDIR/mon.txt)')
@@ -81,6 +137,30 @@ def main():
                      width=qs.FB_W // scale // 8, height=qs.FB_H // scale // 16)
     label.pack()
     state = {'photo': None, 'last': None, 'frames': 0, 'saves': 0, 'err': ''}
+    inp = Input(qs, ep)
+
+    def panel_xy(e):
+        return (min(max(e.x * scale, 0), qs.FB_W - 1),
+                min(max(e.y * scale, 0), qs.FB_H - 1))
+
+    def press(e):
+        x, y = panel_xy(e)
+        print(f'touch down {x},{y}', flush=True)
+        inp.touch(x, y, True)
+
+    def motion(e):
+        if inp.down:
+            x, y = panel_xy(e)
+            inp.touch(x, y)
+
+    def release(e):
+        x, y = panel_xy(e)
+        print(f'touch up {x},{y}', flush=True)
+        inp.touch(x, y, False)
+
+    label.bind('<ButtonPress-1>', press)
+    label.bind('<B1-Motion>', motion)
+    label.bind('<ButtonRelease-1>', release)
 
     def save_png(raw):
         state['saves'] += 1
@@ -114,10 +194,16 @@ def main():
     root.bind('<KeyPress-q>', lambda e: root.destroy())
     root.bind('<KeyPress-s>', lambda e: save_png(open(raw_path, 'rb').read()))
     root.bind('<Escape>', lambda e: root.destroy())
+    root.bind('<KeyPress-h>', lambda e: inp.key('home'))
+    root.bind('<KeyPress-p>', lambda e: inp.key('power'))
+    root.bind('<KeyPress-plus>', lambda e: inp.key('volumeup'))
+    root.bind('<KeyPress-equal>', lambda e: inp.key('volumeup'))
+    root.bind('<KeyPress-minus>', lambda e: inp.key('volumedown'))
     root.after(1, tick)
     print(f'watching {ep} at {a.fps} fps, subsample {scale} ({qs.FB_W // scale}x{qs.FB_H // scale})',
           flush=True)
     root.mainloop()
+    inp.close()
     try:
         os.unlink(raw_path)
     except OSError:

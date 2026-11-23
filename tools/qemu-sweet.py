@@ -116,8 +116,8 @@ def screen_result(screen, unknown):
     return {'status': status, 'unknown_glyphs': unknown, 'snapshot_only': True}
 
 
-def qmp(sock_path, *cmds, pmemsaves=()):
-    """Run QEMU human-monitor commands over QMP (synchronous, unlike the echoing HMP socket).
+def qmp_session(sock_path):
+    """Open QMP and negotiate capabilities; returns (socket, call).
 
     POSIX: unix:... socket at sock_path. Windows has no AF_UNIX bridging in all
     QEMU builds, so main() picks a free TCP port and stores ';<port>' in
@@ -139,6 +139,46 @@ def qmp(sock_path, *cmds, pmemsaves=()):
                 return r
 
     call('qmp_capabilities')
+    return s, call
+
+
+def send_input(sock_path, events):
+    """QMP input-send-event (abs/btn/rel/key) to the guest's input devices.
+
+    events: [{'type': 'abs', 'data': {'axis': 'x', 'value': v}}, ...]
+    Returns True when QEMU accepted the batch."""
+    s, call = qmp_session(sock_path)
+    try:
+        r = call('input-send-event', events=events)
+    finally:
+        s.close()
+    if 'error' in r:
+        print(f'qmp input-send-event: {r["error"]}', file=sys.stderr)
+        return False
+    return True
+
+
+def send_key(sock_path, qcode, hold_ms=100):
+    """QMP send-key: press and release a QEMU key code (home, power, ...)."""
+    s, call = qmp_session(sock_path)
+    try:
+        r = call('send-key', keys=[{'type': 'qcode', 'data': qcode}],
+                 **{'hold-time': hold_ms})
+    finally:
+        s.close()
+    if 'error' in r:
+        print(f'qmp send-key {qcode}: {r["error"]}', file=sys.stderr)
+        return False
+    return True
+
+
+def qmp(sock_path, *cmds, pmemsaves=()):
+    """Run QEMU human-monitor commands over QMP (synchronous, unlike the echoing HMP socket).
+
+    POSIX: unix:... socket at sock_path. Windows has no AF_UNIX bridging in all
+    QEMU builds, so main() picks a free TCP port and stores ';<port>' in
+    sock_path; we then connect to 127.0.0.1:<port>."""
+    s, call = qmp_session(sock_path)
     out = []
     for c in cmds:
         r = call('human-monitor-command', **{'command-line': c})
@@ -284,8 +324,12 @@ def main():
            '-device', f'loader,addr={STUB_PA:#x},cpu-num=0']
     if a.disk:
         cmd += ['-drive', f'file={a.disk},format=raw,if=none,id=hd0',
-                '-device', 'virtio-blk-device,drive=hd0',
-                '-global', 'virtio-mmio.force-legacy=false']
+                '-device', 'virtio-blk-device,drive=hd0']
+    # Input: the guest polls these two virtio-mmio devices (patch 0082) and
+    # turns them into HID events; sweet-view.py injects via QMP.
+    cmd += ['-device', 'virtio-tablet-device',
+            '-device', 'virtio-keyboard-device',
+            '-global', 'virtio-mmio.force-legacy=false']
     if a.gdb:
         cmd += ['-S', '-gdb', 'tcp::1234']
     print('RUN:', qemu, file=sys.stderr)
