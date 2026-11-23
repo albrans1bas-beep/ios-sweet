@@ -2,6 +2,59 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-11-23 - CI was blocked by retired runners, not by a queue; kernel rebuilding on macos-15-intel with patch 0091; rootfs image being rebuilt with keep_image for the Windows host <<<
+
+**Commits:** `d4eca6f` (xnu.yml -> macos-15-intel + patch 0091), `5bc1786`
+(rootfs.yml: `fsck -fy` the image before upload), `b2b1c98` (qemu-sweet.py runs
+on a stock Windows host).
+
+- **The queued kernel build could never have started.** Run `45085007083`
+  (`4dd17d5`, `runs-on: macos-13`) sat queued for 15 min: GitHub-hosted
+  `macos-13` **no longer exists**, and `macos-14` was retired **2026-11-02**
+  (actions/runner-images README: only `macos-26`, `macos-15`, `macos-14` were
+  listed, 14 marked deprecated/retired). The surviving x64 image is
+  `macos-15-intel`. Its oldest Xcode is **16.0** - the version whose `iig`
+  emits `IORPC.kernelContent`, which xnu-8796 lacks. Fix: **patch 0091**
+  backports the field from xnu-11215 (`struct IORPC` gains
+  `IORPCMessage *kernelContent;` under `#ifdef KERNEL`). The workflow also
+  tees the build to `build.log` and prints unique `error:` lines, because
+  `make -k` buries them in an ~8 min log.
+- **Run `45086301027`** (push of `d4eca6f`) started on `macos-15-intel` within
+  seconds - the runner label is real. First real Xcode-16/SDK-15 data point
+  comes from this run; expect further clang/SDK skew patches.
+- **The Oct runs are gone.** `gh api .../runs/39707027351/artifacts` =
+  `total_count 0` (7-day retention), so the lock-screen image from the Oct 22
+  success cannot be downloaded. The only surviving build product is the
+  rolling release asset `kernel.development.sweet` (17,224,416 B, 2026-10-21,
+  now at `D:\ios\kernel\`). Hence the image rebuild.
+- **Run `45086442700`** (`rootfs.yml`, `keep_image=true`, `secs=600`,
+  `snap_every=300`): rebuilds the 15G image on ubuntu-24.04 and uploads
+  `rootfs.img.gz` (3-day retention). The staging step now runs
+  `fsck.hfsplus -f -y` first, because the smoke boot is SIGKILLed and the
+  host has no hfsprogs to repair the volume. Uploads are free for this public
+  repo, so the old quota workaround (b64 in the job log) is no longer needed
+  for a multi-GB image.
+- **Windows host facts (2026-11-23):** repo = `albrans1bas-beep/ios-sweet`
+  (public, `gh` authenticated). QEMU 11.1 at `C:\Program Files\QEMU` but
+  **not on PATH**; no `llvm-nm`; WSL is **not installed**; `E:` is gone, so
+  the Oct Linux-VM work under `E:\linuxvm` is lost. User rule: **all downloads
+  and artifacts go to D:** - `D:\ios\{ipsw16,kernel,run,rootfs}`.
+- **Local harness validated without a disk** (`b2b1c98`): payload from the
+  release kernel + `mkadt.py --qemu` (16,607,200 B) boots in QEMU, snapshots
+  and panic text decode with `unknown_glyphs 0`. `qemu-sweet.py` now reads
+  defined symbols from the Mach-O `LC_SYMTAB` when `llvm-nm` is missing and
+  probes the standard QEMU install dirs (`QEMU_SYSTEM_AARCH64` overrides).
+  Without `--disk` the guest panics with a kernel data abort (far
+  `0xfffffe1008b58000`) because `-nodefaults` leaves the virtio-mmio window
+  unmapped - expected, not a regression.
+- **Next:** kernel run -> `kernel-latest` asset; rootfs run -> download
+  `rootfs.img.gz` to `D:\ios\rootfs\`, gunzip, then
+  `python tools/qemu-sweet.py D:\ios\run\payload.bin D:\ios\run\out --disk
+  D:\ios\rootfs\rootfs.img --secs 2700 --snap-every 450 --kernel
+  D:\ios\kernel\kernel.development.sweet --fail-on-panic`. Lock screen needs
+  ~1800 s of guest time, so keep secs=2700.
+
+
 ### >>> UPDATE 2026-10-22 (later 6) - TCC fix landed (0 SpringBoard crashes); lock screen confirmed again at 1800 s in a 2700 s run; local Ubuntu builder in progress <<<
 
 **Commits:** `9a64e7b` (notes: lock screen reached), `c6c69a3`
