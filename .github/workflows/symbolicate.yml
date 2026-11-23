@@ -93,8 +93,7 @@ jobs:
         run: |
           set +e
           # xargs collapses the CRLF a Windows editor / --field leaves behind.
-          ADDRS=$(printf '%s' "${{ inputs.addrs }}" | xargs)
-          CDIR=/mnt/ios/System/Library/Caches/com.apple.dyld
+          ADDRS=$(printf '%s' "${{ inputs.addrs }}" | xargs)          CDIR=/mnt/ios/System/Library/Caches/com.apple.dyld
           sudo mkdir -p /tmp/cache
           sudo cp -a "$CDIR"/dyld_shared_cache_arm64* /tmp/cache/
           DSCL=/tmp/cache/dyld_shared_cache_arm64
@@ -114,6 +113,30 @@ jobs:
           cat resolved.txt
           echo "--- unique dylibs hit ---"
           sed 's/.*dylib=\([^ ]*\).*/\1/' resolved.txt | sort | uniq -c | sort -rn | head -20
+
+      - name: Container state of the image
+        run: |
+          set +e
+          echo "=== /private/var/containers tree (depth 2) ==="
+          sudo ls -la /mnt/ios/private/var/containers 2>&1 | head -20
+          for d in Data/System Data/Application Shared/SystemGroup Shared/AppGroup; do
+            printf '%s: ' "$d"; sudo ls "/mnt/ios/private/var/containers/$d" 2>/dev/null | wc -l
+          done
+          sudo ls -la /mnt/ios/private/var/containers/Data/System 2>&1 | head -30
+          echo "=== every MCM metadata plist: identifier + class ==="
+          sudo find /mnt/ios/private/var/containers -maxdepth 4 \
+            -name '.com.apple.mobile_container_manager.metadata.plist' 2>/dev/null | while read -r p; do
+            id=$(sudo python3 -c "import plistlib,sys;d=plistlib.load(open(sys.argv[1],\"rb\"));print(d.get(\"MCMMetadataIdentifier\"),d.get(\"MCMMetadataContentClass\"))" "$p" 2>/dev/null)
+            echo "$p :: $id"
+          done | head -40
+          echo "=== paperboard / wallpaper / springboard containers ==="
+          sudo find /mnt/ios/private/var/containers -maxdepth 4 -type d 2>/dev/null \
+            | grep -iE 'paperboard|wallpaper|springboard|poster' | head -20
+          sudo find /mnt/ios/private/var/mobile/Library -maxdepth 3 -type d 2>/dev/null \
+            | grep -iE 'paperboard|wallpaper|poster' | head -20
+          echo "=== ownership of the hot dirs ==="
+          sudo ls -ldn /mnt/ios/private/var /mnt/ios/private/var/mobile \
+            /mnt/ios/private/var/containers /mnt/ios/private/var/mobile/Library 2>&1 | head
 
       - uses: actions/upload-artifact@v4
         if: always()
