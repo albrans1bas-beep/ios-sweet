@@ -1,0 +1,115 @@
+name: symbolicate
+
+# Resolve raw addresses from a SWEET crash report to dylib + symbol.
+#
+#   addrs: unslid addresses (slide already subtracted), space or newline
+#          separated hex. The rootfs run's image supplies the dyld cache, so
+#          no local HFS+ reader is needed on the developer's machine (there
+#          is none on Windows).
+#
+# The list is printed as `address dylib -> symbol + offset`, one per line, and
+# uploaded as resolved.txt. Nothing here modifies the image.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'rootfs run id whose ios-rootfs artifact to use (blank: newest)'
+        type: string
+        default: ''
+      addrs:
+        description: 'Unslid addresses, space separated (0x...)'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free root disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost /usr/lib/jvm /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/go /opt/pipx 2>/dev/null || true
+          sudo docker image prune -af 2>/dev/null || true
+          df -h /
+
+      - name: Deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends hfsprogs unzip curl
+          K=$(uname -r)
+          sudo modprobe hfsplus 2>/dev/null || {
+            sudo apt-get install -y "linux-modules-extra-$K"; sudo modprobe hfsplus; }
+          grep -q hfsplus /proc/filesystems
+
+      - name: Fetch the ipsw tool
+        run: |
+          mkdir -p bin
+          gh release download -R blacktop/ipsw -p '*linux_x86_64.tar.gz' -D bin
+          tar xf bin/ipsw_*_linux_x86_64.tar.gz -C bin
+          BIN=$(find bin -type f -name ipsw -perm -u+x | head -1)
+          mv "$BIN" bin/ipswbin
+          ./bin/ipswbin version 2>&1 | head -2 || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Download the image artifact
+        run: |
+          RUN="${{ inputs.run_id }}"
+          if [ -z "$RUN" ]; then
+            RUN=$(gh run list -R "$GITHUB_REPOSITORY" --workflow rootfs.yml --limit 20 \
+              --json databaseId,conclusion --jq '[.[]|select(.conclusion=="success")][0].databaseId')
+          fi
+          echo "run $RUN"
+          ID=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN/artifacts" \
+            --jq '.artifacts[]|select(.name=="ios-rootfs")|.id' | head -1)
+          echo "artifact $ID"
+          [ -n "$ID" ] || { echo "no ios-rootfs artifact on run $RUN"; exit 1; }
+          # Stream the zip straight into gunzip: 6 GB zip, 15 GB image, and the
+          # runner must hold both plus the cache we are after.
+          curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$ID/zip" \
+            -o rootfs.zip
+          unzip -l rootfs.zip | head
+
+      - name: Unpack and mount
+        run: |
+          unzip -p rootfs.zip '*.gz' | gunzip -1 > rootfs.img
+          ls -l rootfs.img
+          sudo fsck.hfsplus -fy rootfs.img >/dev/null 2>&1 || true
+          sudo mkdir -p /mnt/ios
+          sudo mount -o loop,force rootfs.img /mnt/ios
+          sudo ls /mnt/ios | head
+
+      - name: Resolve
+        run: |
+          set -o pipefail
+          CDIR=/mnt/ios/System/Library/Caches/com.apple.dyld
+          sudo ls -la "$CDIR" | head -20
+          DSC="$CDIR/dyld_shared_cache_arm64"
+          [ -f "$DSC" ] || DSC=$(sudo find /mnt/ios -name 'dyld_shared_cache_arm64' -type f | head -1)
+          echo "cache $DSC"
+          : > resolved.txt
+          for a in ${{ inputs.addrs }}; do
+            out=$(timeout 180 ./bin/ipswbin dyld a2s "$DSC" "$a" -d 2>&1 | head -4)
+            line="$a | $(echo "$out" | tr '\n' ' ' | sed 's/  */ /g')"
+            echo "$line" | tee -a resolved.txt
+          done
+          echo "--- unique dylibs hit ---"
+          sed 's/.*dylib=\([^ ]*\).*/\1/' resolved.txt | sort | uniq -c | sort -rn | head -20
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: resolved
+          path: resolved.txt
+          retention-days: 7
+          if-no-files-found: warn
