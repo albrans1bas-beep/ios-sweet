@@ -377,7 +377,7 @@ def main():
             subprocess.run([find_qemu_img(), 'create', '-f', 'qcow2', '-F',
                             'raw', '-b', disk, ov], check=True)
             disk = ov
-        cmd += ['-drive', f'file={disk},format=raw,if=none,id=hd0',
+        cmd += ['-drive', f'file={disk},format={"qcow2" if a.overlay else "raw"},if=none,id=hd0',
                 '-device', 'virtio-blk-device,drive=hd0']
     # Input: the guest polls these two virtio-mmio devices (patch 0082) and
     # turns them into HID events; sweet-view.py injects via QMP.
