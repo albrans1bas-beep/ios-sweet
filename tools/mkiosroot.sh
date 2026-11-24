@@ -316,32 +316,41 @@ PY
 # RunAtLoad is ignored by this launchd's cache loader (lsd and
 # containermanagerd both stay demand-started even with RunAtLoad set in
 # the cache), so force containermanagerd to start during EARLY boot
-# instead: repurpose three restore/demo jobs that boot long before
-# SpringBoard into 'launchctl kickstart' invocations.  Its (slow, TCG)
-# init scan then finishes long before SpringBoard's first container
-# query, which is what races it today.
-# match by job label - the plist filenames differ from the labels
-for vlabel in finish-obliteration finish-restore finish-demo-restore restore-datapartition; do
-	vp=
-	for cand in "$work"/root/System/Library/LaunchDaemons/*.plist; do
-		grep -as -q "$vlabel" "$cand" 2>/dev/null && vp="$cand" && break
-	done
-	[ -n "$vp" ] || { echo "no victim plist for $vlabel"; continue; }
-	echo "repurposing $vp (label $vlabel)"
-	sudo python3 - "$vp" <<'PYEOF2'
+# instead: repurpose the restore/obliteration boot-task jobs (which launchd
+# really does run long before SpringBoard) into 'launchctl kickstart'
+# invocations - edited straight in the compiled cache, which is what
+# launchd reads.  containermanagerd's slow TCG init scan then finishes
+# long before SpringBoard's first container query.
+sudo python3 - "$launchd_cache" <<'PYEOF2'
 import plistlib, sys
 p = sys.argv[1]
 with open(p, 'rb') as f:
 	d = plistlib.load(f)
-d['ProgramArguments'] = ['/usr/bin/launchctl', 'kickstart',
-    'system/com.apple.containermanagerd']
-d['RunAtLoad'] = True
-d.pop('MachServices', None)
+print('cache top-level keys:', list(d.keys()))
+victims = {'finish-obliteration', 'finish-restore',
+    'finish-demo-restore', 'restore-datapartition'}
+
+def edit(o, path=''):
+	if isinstance(o, dict):
+		for k, v in list(o.items()):
+			if isinstance(v, dict):
+				lbl = v.get('Label')
+				if isinstance(lbl, str) and lbl in victims:
+					v['ProgramArguments'] = ['/usr/bin/launchctl',
+					    'kickstart', 'system/com.apple.containermanagerd']
+					v.pop('MachServices', None)
+					print('repurposed', lbl, 'at', k)
+				else:
+					edit(v, path + '/' + str(k))
+	elif isinstance(o, list):
+		for v in o:
+			edit(v, path)
+
+edit(d)
 with open(p, 'wb') as f:
 	plistlib.dump(d, f, fmt=plistlib.FMT_BINARY)
-print('victim repurposed:', d.get('Label'))
+print('cache with kickstart victims written')
 PYEOF2
-done
 else
 	echo "no compiled launchd cache at $launchd_cache"
 fi
