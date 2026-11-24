@@ -2,6 +2,39 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-11-24 - FULLY INTERACTIVE: unlock, home screen, Settings app <<<
+
+**The emulator is now interactive end to end** (run `D:\iosun\out-final2`,
+clean image + `--overlay`, kernel 0092, both input devices):
+
+1. Boot: root mounts through the qcow2 overlay with **0** hfs corruption.
+2. First SpringBoard instance crashes on the container race (~300 s), launchd
+   relaunches it (exec SpringBoard x2).
+3. **The relaunched SpringBoard turns the panel back on BY ITSELF** - guest
+   log: `Unbalanced calls to begin/end appearance transitions for
+   <SBCoverSheetPrimarySlidingViewController>` then `SWEET FB: display on`
+   and swaps resume. No power key needed; it just takes ~19 minutes of TCG
+   time after the relaunch. Do not send keys before that - they do nothing.
+4. `SWEET INPUT: touch down/up at X,Y` in the ring for every QMP tap.
+5. **Swipe up from the bottom edge unlocks**: 30-step swipe 540,2380 ->
+   540,600 produced the cover-sheet dismiss animation (swaps 16 -> 19) and
+   the HOME SCREEN: status bar with time, app grid (Settings, Safari in the
+   dock, "Waiting..." placeholders), Search pill.
+6. **Tapping the Settings icon launches the real Settings app** - fully
+   rendered list (Airplane Mode, Wi-Fi, Notifications, Sounds, Focus, Screen
+   Time, General, Control Center, Display & Brightness, Home Screen,
+   Accessibility), "Sign in to your iPhone" card, status bar clock ticking.
+
+Touch mapping note: the guest UI is 375x812@3x = 1125x2436 but the digitizer
+scales to the ADT panel 1080x2400; taps still land correctly (icon positions
+estimated from the 1080x2400 framebuffer dump hit what they should), but the
+45/36 px skew should be fixed in the driver (VIN_PANEL_W/H or read the real
+mode from sweetfb).
+
+Colors: the lock-screen clock, dock and Search pill render red/pink instead
+of white/gray in our FB dumps - worth checking the surface format the swap
+path copies (fmt 0x42475241 = 'BGRA') vs what the viewer assumes.
+
 ### >>> UPDATE 2026-11-23 (later night) - crash root cause narrowed; image corruption; 0092 kernel <<<
 
 - **0092 (virtio-input binds every device) is built and verified in the
