@@ -4,6 +4,11 @@
 
 ### >>> UPDATE 2026-11-24 (later) - first-launch crash FIXED in CI smoke; panel 1125x2436; MobileGestalt init block identified <<<
 
+- **`AGENTS.md` rewritten (commit `ce41024`)**: compact current-state guide -
+  verified host quirks (no WSL, QEMU under `C:\Program Files\QEMU`, D: artifacts,
+  `gh run download` stalls), CI/QEMU command lines, `--overlay` and
+  `--display egl-headless --gpu` requirements, patch numbering, device rules.
+
 **Containermanagerd pre-warm**: the factory
 `System/Library/LaunchDaemons/com.apple.containermanagerd.plist` ALREADY has
 `RunAtLoad = True`, and so does the compiled launchd cache job
