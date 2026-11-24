@@ -231,39 +231,87 @@ def find(o):
 p = sys.argv[1]
 with open(p, 'rb') as f:
 	d = plistlib.load(f)
-def find_all(o, out):
+def find_all(o, out, parent=None, pkey=None):
 	if isinstance(o, dict):
 		lbl = o.get('Label')
-		if isinstance(lbl, str) and ('lsd' == lbl or 'containermanagerd' in lbl):
-			out.append(o)
-		for v in o.values():
-			find_all(v, out)
+		if isinstance(lbl, str) and (lbl == 'com.apple.lsd' or 'containermanagerd' in lbl):
+			out.append((parent, pkey, lbl))
+		for k, v in o.items():
+			find_all(v, out, o, k)
 	elif isinstance(o, list):
-		for v in o:
-			find_all(v, out)
+		for i, v in enumerate(o):
+			find_all(v, out, o, i)
 
 jobs = []
 find_all(d, jobs)
 if not jobs:
 	print('no lsd/containermanagerd job in compiled launchd cache')
 	sys.exit(0)
-for j in jobs:
-	print('compiled job before:', j.get('Label'), 'RunAtLoad =', j.get('RunAtLoad'))
-	j['RunAtLoad'] = True
+for parent, key, lbl in jobs:
+	print('priority job:', lbl, 'parent', type(parent).__name__,
+	    'key', repr(key))
+
+def set_ral(o):
+	if isinstance(o, dict):
+		lbl = o.get('Label')
+		if isinstance(lbl, str) and (lbl == 'com.apple.lsd' or 'containermanagerd' in lbl):
+			o['RunAtLoad'] = True
+		for v in o.values():
+			set_ral(v)
+	elif isinstance(o, list):
+		for v in o:
+			set_ral(v)
+
+set_ral(d)
+
+# launchd execs the System daemons in cache-dict order and SpringBoard's
+# container query races containermanagerd's init - move the priority jobs
+# to the front of whatever dict holds them so they start (and finish
+# initializing) before SpringBoard.
+def reorder(o):
+	if isinstance(o, dict):
+		moves = []
+		for k in list(o.keys()):
+			v = o[k]
+			if isinstance(v, dict):
+				lbl = v.get('Label')
+				if isinstance(lbl, str) and (lbl == 'com.apple.lsd' or 'containermanagerd' in lbl):
+					moves.append(k)
+		if moves:
+			print('reordering dict of', len(o), 'jobs; moving first:', moves)
+			for k in moves:
+				v = o.pop(k)
+				items = [(k, v)] + list(o.items())
+				o.clear()
+				o.update(items)
+		for v in o.values():
+			reorder(v)
+	elif isinstance(o, list):
+		for v in o:
+			reorder(v)
+
+reorder(d)
+
+def show(o, depth=0):
+	if isinstance(o, dict):
+		n = 0
+		for k, v in o.items():
+			if isinstance(v, dict) and isinstance(v.get('Label'), str):
+				print('cache order:', v['Label'])
+				n += 1
+			if n >= 8:
+				return
+		for v in o.values():
+			show(v, depth + 1)
+	elif isinstance(o, list):
+		for v in o:
+			show(v, depth + 1)
+
+show(d)
+
 with open(p, 'wb') as f:
 	plistlib.dump(d, f, fmt=plistlib.FMT_BINARY)
-for j in jobs:
-	print('compiled job after:', j.get('Label'), 'RunAtLoad =', j.get('RunAtLoad'))
-if not jobs:
-	print('no lsd/containermanagerd job in compiled launchd cache')
-	sys.exit(0)
-for j in jobs:
-	print('compiled job before:', j.get('Label'), 'RunAtLoad =', j.get('RunAtLoad'))
-	j['RunAtLoad'] = True
-with open(p, 'wb') as f:
-	plistlib.dump(d, f, fmt=plistlib.FMT_BINARY)
-for j in jobs:
-	print('compiled job after:', j.get('Label'), 'RunAtLoad =', j.get('RunAtLoad'))
+print('compiled cache written')
 PY
 else
 	echo "no compiled launchd cache at $launchd_cache"
