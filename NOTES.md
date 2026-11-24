@@ -2,6 +2,62 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-11-24 (later) - first-launch crash FIXED in CI smoke; panel 1125x2436; MobileGestalt init block identified <<<
+
+**Containermanagerd pre-warm**: the factory
+`System/Library/LaunchDaemons/com.apple.containermanagerd.plist` ALREADY has
+`RunAtLoad = True`, and so does the compiled launchd cache job
+(`com.apple.containermanagerd RunAtLoad = True` printed by mkiosroot) - so
+RunAtLoad was never the missing piece; the daemon is still demand-started
+after SpringBoard (`exec SpringBoard` line 700, `exec containermanagerd`
+line 834 in the CI smoke sweetlog).  mkiosroot now also sets RunAtLoad on
+the `.system` variant and the cache edit is robust (dict Labels crash fixed).
+
+**CI smoke run 45313051314 (rootfs, green):**
+- **ZERO `CRASH SpringBoard`** and exactly ONE `exec SpringBoard` in the
+  whole 45-min smoke - the first-launch container race did NOT fire this
+  boot.  One data point, not proof, but the boot is on the good path.
+- Screen progression: Apple logo (120-600 s) -> kernel console text
+  (720-960 s) -> SpringBoard spinner on black (1560 s -> end).  The second
+  `SWEET FB: display on` (self-wake) lands near the very end of the smoke -
+  the boot is a few minutes behind out-final2's pace but on the same track.
+- fsck-after: clean, 0 hfs corruption lines.
+
+**Panel is now 1125x2436 (device-native, no cropping)**: SpringBoard renders
+at the d22ap native 375x812@3x = 1125x2436 regardless of the panel size we
+report, and the IOMFB swap path copies WITHOUT scaling - the right 45
+columns and bottom 36 rows of every screen were cropped off (Settings rows
+cut at the bottom, battery at the edge).  Fixed everywhere at once:
+- `mkadt.py` FB_W/FB_H/FB_STRIDE = 1125/2436/4500, ADT regenerated,
+- `qemu-sweet.py` FB_W/FB_H + dump sizes (fb.png/raw),
+- kernel patch **0093** `VIN_PANEL_W/H` = 1125/2436 (CI run 45311121816
+  green, sha256 bd30f2a3ffa2c6db, saved as
+  `D:\ios\kernel\kernel.development.sweet.p0093`),
+- payload rebuilt: `D:\ios\run\payload-0093.bin` (16,606,624 B, same
+  cmdline incl. `wdt=-1`).
+Touch <-> display are consistent by construction now (digitizer and panel
+share the same constants); the old 1080x2400 runs remain valid history.
+
+**19-minute init root-caused (not yet fixed)**: symbolicate of the
+relaunched SpringBoard's 600 s sample (run 45308254704): the MAIN thread is
+blocked in `dispatch_semaphore_wait_slow` <- libMobileGestalt
+(func_19c556440 +648 with 4 nested frames) <- `-[ISDefaults init]`
+(IconServices, dispatch_once).  MobileGestaltHelper is UP and IDLE in its
+run loop at the same instant, so this is NOT an XPC round-trip - it looks
+like libMobileGestalt waiting out a long timeout before falling back to
+local computation (fits: boot completes eventually).  The MobileGestalt
+cache dir
+`private/var/containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache`
+is EMPTY even after a full boot, so there is no cache to seed from yet.
+Next lever if boot time matters: capture which MG keys ISDefaults asks for
+and pre-seed CacheExtra, or trace why the helper path stalls.
+
+**In flight**: fresh image with the above from run 45313051314
+(`ios-rootfs` artifact, 6,263,713,405 B zip) downloading to
+`D:\ios\tmp\rootfs-art2`; next local boot = payload-0093 + new image +
+`--overlay --input both --display egl-headless --gpu`, expect: no crash,
+lock screen in ~20 min, UNCROPPED UI, touch 1:1.
+
 ### >>> UPDATE 2026-11-24 - FULLY INTERACTIVE: unlock, home screen, Settings app <<<
 
 **The emulator is now interactive end to end** (run `D:\iosun\out-final2`,
