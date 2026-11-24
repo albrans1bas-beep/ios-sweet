@@ -46,13 +46,15 @@ def read_endpoint(args):
     return parse_endpoint(open(path).read())
 
 
-def grab(qs, ep, raw_path):
-    """One consistent frame: stop, pmemsave, cont."""
-    qs.qmp(ep, 'stop')
+def grab(qs, sess, raw_path):
+    """One consistent frame: stop, pmemsave, cont - shared session."""
+    _, call = sess
+    call('stop')
     try:
-        qs.qmp(ep, pmemsaves=[(qs.FB_BASE, qs.FB_STRIDE * qs.FB_H, raw_path)])
+        call('pmemsave', val=qs.FB_BASE, size=qs.FB_STRIDE * qs.FB_H,
+             filename=raw_path)
     finally:
-        qs.qmp(ep, 'cont')
+        call('cont')
     return open(raw_path, 'rb').read()
 
 
@@ -66,21 +68,21 @@ class Input:
     virtio-tablet-device + virtio-keyboard-device, the kernel polls them
     (patch 0082) and feeds backboardd's HID services."""
 
-    def __init__(self, qs, ep):
-        self.qs, self.ep, self.sess, self.down = qs, ep, None, False
+    def __init__(self, qs, holder):
+        self.qs, self.holder, self.down = qs, holder, False
 
     def call(self, execute, **args):
+        if self.holder.get('sess') is None:
+            return None
         try:
-            if self.sess is None:
-                self.sess = self.qs.qmp_session(self.ep)
-            r = self.sess[1](execute, **args)
+            r = self.holder['sess'][1](execute, **args)
         except Exception as e:
             print(f'input failed: {type(e).__name__}: {e}', flush=True)
-            self.sess = None
+            self.holder['sess'] = None
             return None
         if 'error' in r:
             print(f'input {execute}: {r["error"]}', flush=True)
-            self.sess = None
+            self.holder['sess'] = None
         return r
 
     def touch(self, x, y, down=None):
@@ -103,13 +105,8 @@ class Input:
                   **{'hold-time': 100})
 
     def close(self):
-        if self.sess:
-            try:
-                self.sess[0].close()
-            except OSError:
-                pass
-            self.sess = None
-
+        pass
+        # the shared session is owned by main()
 
 def main():
     ap = argparse.ArgumentParser()
@@ -139,7 +136,12 @@ def main():
                      width=qs.FB_W // scale // 8, height=qs.FB_H // scale // 16)
     label.pack()
     state = {'photo': None, 'last': None, 'frames': 0, 'saves': 0, 'err': ''}
-    inp = Input(qs, ep)
+    holder = {}
+    def ensure_sess():
+        if holder.get('sess') is None:
+            holder['sess'] = qs.qmp_session(ep)
+        return holder['sess']
+    inp = Input(qs, holder)
 
     def panel_xy(e):
         return (min(max(e.x * scale, 0), qs.FB_W - 1),
@@ -172,7 +174,8 @@ def main():
 
     def tick():
         try:
-            raw = grab(qs, ep, raw_path)
+            sess = ensure_sess()
+            raw = grab(qs, sess, raw_path)
             digest = hashlib.sha1(raw[::4096]).hexdigest()[:12]
             if digest != state['last']:
                 qs.write_png(png_path, raw)
@@ -187,6 +190,7 @@ def main():
                 print(f'frame {state["frames"]} {digest}', flush=True)
             state['err'] = ''
         except Exception as e:	# keep the window alive across QMP hiccups
+            holder['sess'] = None
             msg = f'{type(e).__name__}: {e}'
             if msg != state['err']:
                 state['err'] = msg
