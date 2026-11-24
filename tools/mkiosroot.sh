@@ -313,6 +313,31 @@ with open(p, 'wb') as f:
 	plistlib.dump(d, f, fmt=plistlib.FMT_BINARY)
 print('compiled cache written')
 PY
+# RunAtLoad is ignored by this launchd's cache loader (lsd and
+# containermanagerd both stay demand-started even with RunAtLoad set in
+# the cache), so force containermanagerd to start during EARLY boot
+# instead: repurpose three restore/demo jobs that boot long before
+# SpringBoard into 'launchctl kickstart' invocations.  Its (slow, TCG)
+# init scan then finishes long before SpringBoard's first container
+# query, which is what races it today.
+for victim in FinishRestoreFromBackup finish_demo_restore mobile_obliterator; do
+	vp=$(find "$work/root/System/Library/LaunchDaemons" -iname "*${victim}*.plist" | head -1)
+	[ -n "$vp" ] || { echo "no victim plist for $victim"; continue; }
+	echo "repurposing $vp"
+	sudo python3 - "$vp" <<'PYEOF2'
+import plistlib, sys
+p = sys.argv[1]
+with open(p, 'rb') as f:
+	d = plistlib.load(f)
+d['ProgramArguments'] = ['/usr/bin/launchctl', 'kickstart',
+    'system/com.apple.containermanagerd']
+d['RunAtLoad'] = True
+d.pop('MachServices', None)
+with open(p, 'wb') as f:
+	plistlib.dump(d, f, fmt=plistlib.FMT_BINARY)
+print('victim repurposed:', d.get('Label'))
+PYEOF2
+done
 else
 	echo "no compiled launchd cache at $launchd_cache"
 fi
