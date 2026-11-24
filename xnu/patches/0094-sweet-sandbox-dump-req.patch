@@ -1,6 +1,6 @@
 --- a/bsd/kern/sweet_amfi.c
 +++ b/bsd/kern/sweet_amfi.c
-@@ -285,6 +285,49 @@
+@@ -285,6 +285,46 @@
   */
  static uint64_t sweet_sandbox_seen;
  
@@ -28,18 +28,15 @@
 +	}
 +	proc_name(proc_pid(p), name, sizeof(name));
 +	if (len == 0) {
-+		printf("SWEET Sandbox: %s op %d arg %#llx copyin failed
-+",
++		printf("SWEET Sandbox: %s op %d arg %#llx copyin failed\n",
 +		    name, call, (unsigned long long)arg);
 +		return;
 +	}
-+	printf("SWEET Sandbox: %s op %d req %d bytes at %#llx
-+",
++	printf("SWEET Sandbox: %s op %d req %d bytes at %#llx\n",
 +	    name, call, len, (unsigned long long)arg);
 +	for (i = 0; i + 15 < (unsigned)len; i += 16) {
 +		printf("SWEET SB %3d: %02x %02x %02x %02x %02x %02x %02x %02x "
-+		    "%02x %02x %02x %02x %02x %02x %02x %02x
-+",
++		    "%02x %02x %02x %02x %02x %02x %02x %02x\n",
 +		    i, buf[i], buf[i+1], buf[i+2], buf[i+3],
 +		    buf[i+4], buf[i+5], buf[i+6], buf[i+7],
 +		    buf[i+8], buf[i+9], buf[i+10], buf[i+11],
@@ -50,7 +47,7 @@
  static int
  sweet_sandbox_syscall(struct proc *p, int call, __unused user_addr_t arg)
  {
-@@ -296,9 +339,12 @@
+@@ -296,9 +336,12 @@
  	}
  	switch (call) {
  	case 4:         /* container path (audit token / pid) */
