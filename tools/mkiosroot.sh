@@ -182,6 +182,28 @@ else
 	echo "no lsd plist at $lsd_plist; candidates:"
 	sudo find "$work/root" -name '*lsd*.plist' | head
 fi
+# containermanagerd is demand-started by SpringBoard's first container
+# lookup, and that first lookup arrives while the daemon is still
+# initializing: it answers nil, SpringBoard aborts on
+# -[NSURL initFileURLWithPath:] and launchd relaunches it (the second
+# instance finds the daemon ready and reaches the lock screen).  Start it
+# at boot like lsd, in both the plist and the compiled launchd cache.
+for cm_plist in "$work/root/System/Library/LaunchDaemons/"*containermanager*.plist; do
+	sudo test -f "$cm_plist" || continue
+	echo "containermanagerd plist: $cm_plist"
+	sudo python3 - "$cm_plist" <<'PYEOF'
+import plistlib, sys
+p = sys.argv[1]
+with open(p, 'rb') as f:
+	d = plistlib.load(f)
+print('containermanagerd plist before: RunAtLoad =', d.get('RunAtLoad'))
+d['RunAtLoad'] = True
+with open(p, 'wb') as f:
+	plistlib.dump(d, f, fmt=plistlib.FMT_BINARY)
+print('containermanagerd plist after: RunAtLoad =', d.get('RunAtLoad'))
+PYEOF
+done
+
 # launchd takes its job set from the compiled cache, not the LaunchDaemons
 # plists (launchd_cache_loader -> /System/Library/xpc/launchd.plist,
 # "Using unsecure cache"). Mark lsd as a boot job there too, otherwise the
@@ -209,15 +231,28 @@ def find(o):
 p = sys.argv[1]
 with open(p, 'rb') as f:
 	d = plistlib.load(f)
-j = find(d)
-if j is None:
-	print('no com.apple.lsd job in compiled launchd cache')
+def find_all(o, labels, out):
+	if isinstance(o, dict):
+		if o.get('Label') in labels:
+			out.append(o)
+		for v in o.values():
+			find_all(v, labels, out)
+	elif isinstance(o, list):
+		for v in o:
+			find_all(v, labels, out)
+
+jobs = []
+find_all(d, {'com.apple.lsd', 'com.apple.containermanagerd'}, jobs)
+if not jobs:
+	print('no lsd/containermanagerd job in compiled launchd cache')
 	sys.exit(0)
-print('compiled lsd job before:', j)
-j['RunAtLoad'] = True
+for j in jobs:
+	print('compiled job before:', j.get('Label'), 'RunAtLoad =', j.get('RunAtLoad'))
+	j['RunAtLoad'] = True
 with open(p, 'wb') as f:
 	plistlib.dump(d, f, fmt=plistlib.FMT_BINARY)
-print('compiled lsd job after:', j)
+for j in jobs:
+	print('compiled job after:', j.get('Label'), 'RunAtLoad =', j.get('RunAtLoad'))
 PY
 else
 	echo "no compiled launchd cache at $launchd_cache"
