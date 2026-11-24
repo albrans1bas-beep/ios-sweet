@@ -46,15 +46,23 @@ def read_endpoint(args):
     return parse_endpoint(open(path).read())
 
 
-def grab(qs, sess, raw_path):
-    """One consistent frame: stop, pmemsave, cont - shared session."""
-    _, call = sess
-    call('stop')
+def grab(qs, holder, raw_path):
+    """One consistent frame: stop, pmemsave, cont - short-lived session."""
+    sess = holder.get('sess')
+    if sess is None:
+        raise OSError('no QMP session')
     try:
-        call('pmemsave', val=qs.FB_BASE, size=qs.FB_STRIDE * qs.FB_H,
-             filename=raw_path)
+        sess[1]('stop')
+        sess[1]('pmemsave', val=qs.FB_BASE, size=qs.FB_STRIDE * qs.FB_H,
+                filename=raw_path)
+        sess[1]('cont')
     finally:
-        call('cont')
+        try:
+            sess[0].close()
+        except OSError:
+            pass
+        holder['sess'] = None
+
     return open(raw_path, 'rb').read()
 
 
@@ -74,16 +82,22 @@ class Input:
     def call(self, execute, **args):
         if self.holder.get('sess') is None:
             return None
+        r = None
         try:
             r = self.holder['sess'][1](execute, **args)
         except Exception as e:
             print(f'input failed: {type(e).__name__}: {e}', flush=True)
-            self.holder['sess'] = None
-            return None
-        if 'error' in r:
-            print(f'input {execute}: {r["error"]}', flush=True)
-            self.holder['sess'] = None
+            r = None
+        else:
+            if 'error' in r:
+                print(f'input {execute}: ' + str(r['error']), flush=True)
+        try:
+            self.holder['sess'][0].close()
+        except OSError:
+            pass
+        self.holder['sess'] = None
         return r
+
 
     def touch(self, x, y, down=None):
         if down is not None:
@@ -175,7 +189,7 @@ def main():
     def tick():
         try:
             sess = ensure_sess()
-            raw = grab(qs, sess, raw_path)
+            raw = grab(qs, holder, raw_path)
             digest = hashlib.sha1(raw[::4096]).hexdigest()[:12]
             if digest != state['last']:
                 qs.write_png(png_path, raw)
