@@ -231,18 +231,29 @@ def find(o):
 p = sys.argv[1]
 with open(p, 'rb') as f:
 	d = plistlib.load(f)
-def find_all(o, labels, out):
+def find_all(o, out):
 	if isinstance(o, dict):
-		if o.get('Label') in labels:
+		lbl = o.get('Label')
+		if isinstance(lbl, str) and ('lsd' == lbl or 'containermanagerd' in lbl):
 			out.append(o)
 		for v in o.values():
-			find_all(v, labels, out)
+			find_all(v, out)
 	elif isinstance(o, list):
 		for v in o:
-			find_all(v, labels, out)
+			find_all(v, out)
 
 jobs = []
-find_all(d, {'com.apple.lsd', 'com.apple.containermanagerd'}, jobs)
+find_all(d, jobs)
+if not jobs:
+	print('no lsd/containermanagerd job in compiled launchd cache')
+	sys.exit(0)
+for j in jobs:
+	print('compiled job before:', j.get('Label'), 'RunAtLoad =', j.get('RunAtLoad'))
+	j['RunAtLoad'] = True
+with open(p, 'wb') as f:
+	plistlib.dump(d, f, fmt=plistlib.FMT_BINARY)
+for j in jobs:
+	print('compiled job after:', j.get('Label'), 'RunAtLoad =', j.get('RunAtLoad'))
 if not jobs:
 	print('no lsd/containermanagerd job in compiled launchd cache')
 	sys.exit(0)
