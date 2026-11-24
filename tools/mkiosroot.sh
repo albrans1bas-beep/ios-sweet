@@ -327,21 +327,31 @@ p = sys.argv[1]
 with open(p, 'rb') as f:
 	d = plistlib.load(f)
 print('cache top-level keys:', list(d.keys()))
-victims = {'finish-obliteration', 'finish-restore',
-    'finish-demo-restore', 'restore-datapartition'}
+
+# Boot-task jobs (launchd logs '(finish-obliteration) Doing boot task') may
+# not carry a Label key inside the cache - match by the cache KEY (the plist
+# path) as well as by Label, and print every candidate either way.
+pats = ('restore', 'obliterat', 'demo')
 
 def edit(o, path=''):
 	if isinstance(o, dict):
 		for k, v in list(o.items()):
+			ks = str(k)
 			if isinstance(v, dict):
 				lbl = v.get('Label')
-				if isinstance(lbl, str) and lbl in victims:
+				lbls = lbl if isinstance(lbl, str) else ''
+				if any(t in ks.lower() or t in lbls.lower() for t in pats):
+					print('candidate:', ks, 'label:', lbls,
+					    'args:', v.get('ProgramArguments'))
+				if any(t in ks.lower() for t in pats) or lbls in (
+				    'finish-obliteration', 'finish-restore',
+				    'finish-demo-restore', 'restore-datapartition'):
 					v['ProgramArguments'] = ['/usr/bin/launchctl',
 					    'kickstart', 'system/com.apple.containermanagerd']
 					v.pop('MachServices', None)
-					print('repurposed', lbl, 'at', k)
-				else:
-					edit(v, path + '/' + str(k))
+					v['RunAtLoad'] = True
+					print('repurposed', ks, 'label', lbls)
+			edit(v, path + '/' + ks)
 	elif isinstance(o, list):
 		for v in o:
 			edit(v, path)
@@ -350,6 +360,7 @@ edit(d)
 with open(p, 'wb') as f:
 	plistlib.dump(d, f, fmt=plistlib.FMT_BINARY)
 print('cache with kickstart victims written')
+
 PYEOF2
 else
 	echo "no compiled launchd cache at $launchd_cache"
