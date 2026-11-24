@@ -320,10 +320,14 @@ PY
 # SpringBoard into 'launchctl kickstart' invocations.  Its (slow, TCG)
 # init scan then finishes long before SpringBoard's first container
 # query, which is what races it today.
-for victim in FinishRestoreFromBackup finish_demo_restore mobile_obliterator; do
-	vp=$(find "$work/root/System/Library/LaunchDaemons" -iname "*${victim}*.plist" | head -1)
-	[ -n "$vp" ] || { echo "no victim plist for $victim"; continue; }
-	echo "repurposing $vp"
+# match by job label - the plist filenames differ from the labels
+for vlabel in finish-obliteration finish-restore finish-demo-restore restore-datapartition; do
+	vp=
+	for cand in "$work"/root/System/Library/LaunchDaemons/*.plist; do
+		grep -as -q "$vlabel" "$cand" 2>/dev/null && vp="$cand" && break
+	done
+	[ -n "$vp" ] || { echo "no victim plist for $vlabel"; continue; }
+	echo "repurposing $vp (label $vlabel)"
 	sudo python3 - "$vp" <<'PYEOF2'
 import plistlib, sys
 p = sys.argv[1]
