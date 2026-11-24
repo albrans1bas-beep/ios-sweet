@@ -1,10 +1,15 @@
 --- a/bsd/kern/sweet_amfi.c
 +++ b/bsd/kern/sweet_amfi.c
-@@ -285,6 +285,62 @@
-  */
+@@ -286,42 +286,58 @@
  static uint64_t sweet_sandbox_seen;
  
-+/*
+ /*
+- * Dump the user request of the container-path sandbox operations so the
+- * request layout can be recovered from the guest log (the kernel will
+- * eventually answer op 4 itself and cut the containermanagerd XPC fallback
+- * that races SpringBoard's first launch).  Diagnostic only: the operations
+- * still return ENOENT.
+- */
 + * Dump the first few container-path requests (op 4) including the
 + * buffers their pointers reference, so the request layout can be
 + * recovered from the guest log.  Diagnostic only: op 4 still returns
@@ -12,14 +17,25 @@
 + */
 +static int sweet_sandbox_dumps_left = 6;
 +
-+static void
-+sweet_sandbox_dump_req(struct proc *p, int call, user_addr_t arg)
-+{
+ static void
+ sweet_sandbox_dump_req(struct proc *p, int call, user_addr_t arg)
+ {
+-	uint8_t buf[384];
+-	int len = 0;
+-	static const int tries[] = { 384, 128, 32 };
 +	uint8_t buf[72];
 +	uint8_t tgt[96];
 +	user_addr_t ptrs[4];
 +	static const int offs[] = { 0x10, 0x28, 0x30, 0x38 };
-+	char name[32];
+ 	char name[32];
+-	unsigned i;
+-
+-	for (i = 0; i < sizeof(tries) / sizeof(tries[0]); i++) {
+-		if (arg != 0 && copyin(arg, buf, tries[i]) == 0) {
+-			len = tries[i];
+-			break;
+-		}
+-	}
 +	unsigned i, j;
 +
 +	if (call != 4 || sweet_sandbox_dumps_left <= 0 || arg == 0 ||
@@ -27,16 +43,25 @@
 +		return;
 +	}
 +	sweet_sandbox_dumps_left--;
-+	proc_name(proc_pid(p), name, sizeof(name));
+ 	proc_name(proc_pid(p), name, sizeof(name));
+-	if (len == 0) {
+-		printf("SWEET Sandbox: %s op %d arg %#llx copyin failed\n",
+-		    name, call, (unsigned long long)arg);
+-		return;
+-	}
+-	printf("SWEET Sandbox: %s op %d req %d bytes at %#llx\n",
+-	    name, call, len, (unsigned long long)arg);
+-	for (i = 0; i + 15 < (unsigned)len; i += 16) {
+-		printf("SWEET SB %3d: %02x %02x %02x %02x %02x %02x %02x %02x "
 +	printf("SWEET Sandbox: %s op %d req at %#llx\n",
 +	    name, call, (unsigned long long)arg);
 +	for (i = 0; i + 15 < sizeof(buf); i += 16) {
 +		printf("SWEET SB %2d: %02x %02x %02x %02x %02x %02x %02x %02x "
-+		    "%02x %02x %02x %02x %02x %02x %02x %02x\n",
-+		    i, buf[i], buf[i+1], buf[i+2], buf[i+3],
-+		    buf[i+4], buf[i+5], buf[i+6], buf[i+7],
-+		    buf[i+8], buf[i+9], buf[i+10], buf[i+11],
-+		    buf[i+12], buf[i+13], buf[i+14], buf[i+15]);
+ 		    "%02x %02x %02x %02x %02x %02x %02x %02x\n",
+ 		    i, buf[i], buf[i+1], buf[i+2], buf[i+3],
+ 		    buf[i+4], buf[i+5], buf[i+6], buf[i+7],
+ 		    buf[i+8], buf[i+9], buf[i+10], buf[i+11],
+ 		    buf[i+12], buf[i+13], buf[i+14], buf[i+15]);
 +	}
 +	for (j = 0; j < 4; j++) {
 +		uint64_t v;
@@ -57,18 +82,6 @@
 +			    tgt[i+8], tgt[i+9], tgt[i+10], tgt[i+11],
 +			    tgt[i+12], tgt[i+13], tgt[i+14], tgt[i+15]);
 +		}
-+	}
-+}
-+
- static int
- sweet_sandbox_syscall(struct proc *p, int call, __unused user_addr_t arg)
- {
-@@ -296,6 +352,8 @@
  	}
- 	switch (call) {
- 	case 4:         /* container path (audit token / pid) */
-+		sweet_sandbox_dump_req(p, call, arg);
-+		return ENOENT;
- 	case 5:         /* extension issue */
- 	case 6:         /* extension consume */
- 	case 0x43:      /* container expected */
+ }
+ 
