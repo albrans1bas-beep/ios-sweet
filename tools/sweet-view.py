@@ -3,7 +3,7 @@
 
   sweet-view.py [--mon tcp:127.0.0.1:PORT | --outdir DIR] [--fps N] [--scale N]
 
-The kernel draws into a fixed physical framebuffer (FB_BASE, 1080x2400 BGRA),
+The kernel draws into a fixed physical framebuffer (FB_BASE, 1125x2436 BGRA),
 so a live view is a QMP pmemsave loop, not a QEMU display device. qemu-sweet.py
 writes the monitor endpoint to OUTDIR/mon.txt; --mon overrides it.
 

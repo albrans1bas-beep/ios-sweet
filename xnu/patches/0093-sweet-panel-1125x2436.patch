@@ -1,0 +1,12 @@
+--- a/bsd/dev/sweet_virtio.c
++++ b/bsd/dev/sweet_virtio.c
+@@ -759,7 +759,7 @@
+ #define VIN_KEY_VOLUMEUP     115
+ #define VIN_KEY_VOLUMEDOWN   114
+-#define VIN_PANEL_W          1080
+-#define VIN_PANEL_H          2400
++#define VIN_PANEL_W          1125
++#define VIN_PANEL_H          2436
+ #define VIN_REL_STEP         8
+ 
+ struct vin_event {
