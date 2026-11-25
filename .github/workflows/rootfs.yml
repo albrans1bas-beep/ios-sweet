@@ -263,8 +263,12 @@ jobs:
           base64 -w0 qemu-out/fb.png || true
           echo
           grep -aE 'SWEET VIO TEST: level 1: [0-9]+ checks, 0 failures' sweetlog.txt
-          grep -aq 'exec SpringBoard' sweetlog.txt
-          grep -aE 'exec SpringBoard' sweetlog.txt
+          # A short smoke (e.g. secs=300) only validates early boot/exec; it
+          # cannot reach SpringBoard, so only assert that on a full run.
+          if [ "${{ inputs.secs }}" -ge 1200 ]; then
+            grep -aq 'exec SpringBoard' sweetlog.txt
+            grep -aE 'exec SpringBoard' sweetlog.txt
+          fi
           echo "hfs corruption lines: $(grep -ac 'hfs_swap_BTNode\|BlockMarkFreeInternal' sweetlog.txt || true)"
           grep -aE 'hfs_swap_BTNode|BlockMarkFreeInternal|panic' sweetlog.txt | head -20 || true
           echo "--- last process dump ---"

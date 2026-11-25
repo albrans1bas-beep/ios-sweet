@@ -20,6 +20,11 @@ jobs:
         run: |
           xcrun -sdk iphoneos clang -arch arm64 -miphoneos-version-min=16.0 \
             -O2 -Wall -o mgprobe tools/mgprobe.c
+          # SWEET's AMFI patch marks signed rootfs binaries as platform
+          # binaries; an unsigned exec panics with "non-platform binary".
+          codesign --force --sign - --timestamp=none mgprobe
+          codesign --verify --verbose=2 mgprobe
+          codesign --display --verbose=2 mgprobe
           file mgprobe
           lipo -info mgprobe || true
           ls -la mgprobe
