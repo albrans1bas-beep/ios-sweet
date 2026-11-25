@@ -313,12 +313,14 @@ with open(p, 'wb') as f:
 	plistlib.dump(d, f, fmt=plistlib.FMT_BINARY)
 print('compiled cache written')
 PY
-# Guest-side MobileGestalt probe: installed into the image and started from a
-# hijacked boot-task job, it records the gestalt container / cache / launchd
-# state while SpringBoard is stuck in its ~19 minute init block.  CI dumps
-# /private/var/log/mgprobe.txt out of the image afterwards.
+# Guest-side MobileGestalt probe: a compiled Mach-O (see tools/mgprobe.c) run
+# by a hijacked boot task. The image has no shell, launchctl or plutil, so the
+# old mgprobe.sh could never execute. CI builds the helper on the macOS runner
+# and rootfs.yml stages it as tools/mgprobe before this script runs.
+mgprobe_bin="$(dirname "$0")/mgprobe"
+[[ -x $mgprobe_bin ]] || { echo "no compiled mgprobe at $mgprobe_bin" >&2; exit 1; }
 sudo mkdir -p "$work/root/usr/local/bin" "$work/root/private/var/log"
-sudo install -m 755 "$(dirname "$0")/mgprobe.sh" "$work/root/usr/local/bin/mgprobe.sh"
+sudo install -m 755 "$mgprobe_bin" "$work/root/usr/local/bin/mgprobe"
 
 # Repurpose exactly ONE job - the demoted demo-store job - to run the probe.
 # An earlier attempt matched boot-task jobs by substring ('restore',
@@ -344,8 +346,7 @@ def probe(o):
 	if isinstance(o, dict):
 		for k, v in list(o.items()):
 			if k == key and isinstance(v, dict):
-				v['ProgramArguments'] = ['/bin/sh',
-				    '/usr/local/bin/mgprobe.sh']
+				v['ProgramArguments'] = ['/usr/local/bin/mgprobe']
 				v.pop('MachServices', None)
 				v['RunAtLoad'] = True
 				found += 1
