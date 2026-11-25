@@ -131,7 +131,8 @@ jobs:
       - name: Build the HFS+ root
         run: |
           sudo ./tools/mkiosroot.sh "$BIG"/dmgs/OS.dmg "$BIG"/dmgs/SystemOS.dmg \
-            "$BIG"/dmgs/AppOS.dmg "$BIG"/rootfs.img 15G
+            "$BIG"/dmgs/AppOS.dmg "$BIG"/rootfs.img 15G 2>&1 | tee mkiosroot.log
+          grep -F 'probe job set:' mkiosroot.log
 
       - name: Apply SWEET root tweaks
         run: |
@@ -428,6 +429,7 @@ jobs:
           echo "--- usermanagerd strings ---"
           sudo strings -a /mnt/post/usr/libexec/usermanagerd 2>/dev/null | grep -iE 'foreground|usersession|multiuser|libinfo|launchd|nextsession|host_priv|commpage|persona' | head -100 || true
           echo "--- mgprobe (guest-side gestalt probe) ---"
+          sudo ls -la /mnt/post/usr/local/bin/mgprobe.sh 2>&1 || true
           sudo cat /mnt/post/private/var/log/mgprobe.txt 2>/dev/null | head -200 || true
           echo "--- gestalt cache ---"
           sudo find /mnt/post/private/var/containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache -maxdepth 5 -printf '%s %p\n' 2>/dev/null | head -30 || true

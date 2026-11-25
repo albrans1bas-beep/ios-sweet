@@ -320,72 +320,48 @@ PY
 sudo mkdir -p "$work/root/usr/local/bin" "$work/root/private/var/log"
 sudo install -m 755 "$(dirname "$0")/mgprobe.sh" "$work/root/usr/local/bin/mgprobe.sh"
 
-# RunAtLoad is ignored by this launchd's cache loader (lsd and
-# containermanagerd both stay demand-started even with RunAtLoad set in
-# the cache), so force containermanagerd to start during EARLY boot
-# instead: repurpose the restore/obliteration boot-task jobs (which launchd
-# really does run long before SpringBoard) into 'launchctl kickstart'
-# invocations - edited straight in the compiled cache, which is what
-# launchd reads.  containermanagerd's slow TCG init scan then finishes
-# long before SpringBoard's first container query.
+# Repurpose exactly ONE job - the demoted demo-store job - to run the probe.
+# An earlier attempt matched boot-task jobs by substring ('restore',
+# 'obliterat', 'demo') and hijacked ~12 unrelated framework binaries without
+# any evidence it started containermanagerd earlier, so those edits are gone.
+# The compiled cache is what launchd reads; match the exact plist-path key.
 sudo python3 - "$launchd_cache" <<'PYEOF2'
 import plistlib, sys
+
 p = sys.argv[1]
+key = '/System/Library/LaunchDaemons/com.apple.mobilestoredemod.plist'
 with open(p, 'rb') as f:
 	d = plistlib.load(f)
-print('cache top-level keys:', list(d.keys()))
-
-# Boot-task jobs (launchd logs '(finish-obliteration) Doing boot task') may
-# not carry a Label key inside the cache - match by the cache KEY (the plist
-# path) as well as by Label, and print every candidate either way.
-pats = ('restore', 'obliterat', 'demo')
-
-def edit(o, path=''):
-	if isinstance(o, dict):
-		for k, v in list(o.items()):
-			ks = str(k)
-			if isinstance(v, dict):
-				lbl = v.get('Label')
-				lbls = lbl if isinstance(lbl, str) else ''
-				if any(t in ks.lower() or t in lbls.lower() for t in pats):
-					print('candidate:', ks, 'label:', lbls,
-					    'args:', v.get('ProgramArguments'))
-				if any(t in ks.lower() for t in pats) or lbls in (
-				    'finish-obliteration', 'finish-restore',
-				    'finish-demo-restore', 'restore-datapartition'):
-					v['ProgramArguments'] = ['/usr/bin/launchctl',
-					    'kickstart', 'system/com.apple.containermanagerd']
-					v.pop('MachServices', None)
-					v['RunAtLoad'] = True
-					print('repurposed', ks, 'label', lbls)
-			edit(v, path + '/' + ks)
-	elif isinstance(o, list):
-		for v in o:
-			edit(v, path)
-
-edit(d)
 
 # The demoted demo-store job is free to use: point it at the guest-side
 # MobileGestalt probe instead (it runs early, the script sleeps first).
+# Only the exact cache key is eligible - no substring recursion - and a
+# missing key fails the build, so a silent no-probe image is impossible.
+found = 0
+
 def probe(o):
+	global found
 	if isinstance(o, dict):
 		for k, v in list(o.items()):
-			if isinstance(v, dict):
-				if 'mobilestoredemod' in str(k).lower() and 				    str(k).endswith('.plist'):
-					v['ProgramArguments'] = ['/bin/sh',
-					    '/usr/local/bin/mgprobe.sh']
-					v.pop('MachServices', None)
-					v['RunAtLoad'] = True
-					print('probe job set:', k)
+			if k == key and isinstance(v, dict):
+				v['ProgramArguments'] = ['/bin/sh',
+				    '/usr/local/bin/mgprobe.sh']
+				v.pop('MachServices', None)
+				v['RunAtLoad'] = True
+				found += 1
+				print('probe job set:', k)
+			else:
 				probe(v)
 	elif isinstance(o, list):
 		for v in o:
 			probe(v)
 
 probe(d)
+if found != 1:
+	sys.exit('expected exactly one probe job (%s), found %d' % (key, found))
 with open(p, 'wb') as f:
 	plistlib.dump(d, f, fmt=plistlib.FMT_BINARY)
-print('cache with kickstart victims written')
+print('compiled cache with mgprobe job written')
 
 PYEOF2
 else
