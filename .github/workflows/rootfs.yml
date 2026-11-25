@@ -132,6 +132,15 @@ jobs:
           rm -f ipsw.ipsw
           ls -la dmgs
 
+      - name: Fetch the guest mgprobe helper
+        run: |
+          mkdir -p kernel
+          gh release download kernel-latest -D kernel --pattern 'mgprobe' --clobber
+          cp kernel/mgprobe tools/mgprobe
+          ls -la tools/mgprobe
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Build the HFS+ root
         run: |
           sudo ./tools/mkiosroot.sh "$BIG"/dmgs/OS.dmg "$BIG"/dmgs/SystemOS.dmg \
@@ -220,10 +229,8 @@ jobs:
       - name: Fetch the latest kernel from the rolling release
         run: |
           mkdir -p kernel
-          gh release download kernel-latest -D kernel \
-            --pattern 'kernel.development.sweet' --pattern 'mgprobe' --clobber
-          cp kernel/mgprobe tools/mgprobe
-          ls -la kernel tools/mgprobe
+          gh release download kernel-latest -D kernel --pattern 'kernel.development.sweet' --clobber
+          ls -la kernel
         env:
           GH_TOKEN: ${{ github.token }}
 
