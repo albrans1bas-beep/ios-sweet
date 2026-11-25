@@ -2,6 +2,21 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-11-25 (later still) - compiled mgprobe helper, fast image-only CI works <<<
+
+- Run `45685659077` (`skip_smoke=true`, `keep_image=false`) completed in
+  **9m55s** vs ~46 min for a full run: `probe job set:` confirmed,
+  `mgprobe.sh` installed, but the candidate scan found **no sh/bash/zsh/
+  launchctl anywhere in the image** - the shell probe was dead on arrival.
+- Commits `d9ffa02` (+ pushed): `tools/mgprobe.c` is a standalone Mach-O
+  helper (directory dumps, cache plist dump, process list) built with the
+  iphoneos SDK by the new ~1 min `.github/workflows/mgprobe.yml` and published
+  to the `kernel-latest` release. `mkiosroot.sh` now requires `tools/mgprobe`
+  and sets the exact-key job's `ProgramArguments` to `/usr/local/bin/mgprobe`.
+  `rootfs.yml` downloads the helper with the kernel and checks its install.
+- CI run `45688514954` (mgprobe helper build/publish) started; next: fast
+  rootfs run to confirm the image installs it, then one full run with smoke.
+
 ### >>> UPDATE 2026-11-25 (later) - exact-key probe wired, but the image has no /bin/sh; fast CI mode added <<<
 
 - Commit `cfdb82b`: `mkiosroot.sh` repurposes **only** the exact compiled-cache
