@@ -2,19 +2,25 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
-### >>> UPDATE 2026-11-25 (later) - exact-key mgprobe wiring committed, CI run 45684342945 in flight <<<
+### >>> UPDATE 2026-11-25 (later) - exact-key probe wired, but the image has no /bin/sh; fast CI mode added <<<
 
-- Commit `cfdb82b`: `mkiosroot.sh` now repurposes **only** the exact compiled-cache
+- Commit `cfdb82b`: `mkiosroot.sh` repurposes **only** the exact compiled-cache
   key `/System/Library/LaunchDaemons/com.apple.mobilestoredemod.plist` for
-  `mgprobe.sh`, prints `probe job set:`, and **fails the build** if that key is
-  absent. All broad substring kickstart edits (`restore`/`obliterat`/`demo`,
-  ~12 framework binaries) are removed; containermanagerd pre-warm is dropped.
-  CI also `ls -la`s the installed probe script after the smoke.
-- CI run `45684342945` (rootfs, `keep_image=true`, `secs=1200`,
-  `snap_every=120`) started 2026-11-25 to test this. **Result pending** - check
-  for `probe job set:` in "Build the HFS+ root", the `mgprobe.sh` install line,
-  and `--- mgprobe ---` content. If `exec SpringBoard` is missing (the smoke
-  step greps for it), rerun with `secs=1800`.
+  `mgprobe.sh`, prints `probe job set:`, and **fails the build** if absent.
+  All broad substring kickstart edits (`restore`/`obliterat`/`demo`, ~12
+  framework binaries) are removed; containermanagerd pre-warm is dropped.
+- **Why mgprobe never ran (new finding):** the image has **no `/bin/sh`** and no
+  `/usr/bin/launchctl`. Run `45515580528`'s guest log says
+  `Missing executable detected ... Job: 'com.apple.mobilestoredemod' Executable:
+  '/bin/sh'`; CI `test -x` reports `/mnt/post/bin/sh: no`,
+  `/mnt/post/usr/bin/launchctl: no`. Fixing the cache key alone cannot help
+  until the probe has a real interpreter path in the image.
+- Commit `a96b1e0`: workflow gains a `skip_smoke` input (image-only run ~8 min
+  instead of ~40), uses `gzip -1` for the >2 GB `qemu.log`, and prints
+  shell/launchctl candidates found in the image. All commits are now pushed.
+  CI run `45684342945` was triggered **before the push** (old workflow/code)
+  and cancelled; run `45685659077` (`skip_smoke=true`, `keep_image=false`) is
+  the fast diagnostic run - read `--- shell/launchctl candidates in the image ---`.
 - CI cost measured from run `45515580528` (~46 min total): QEMU smoke 1801 s,
   stage/compress 241 s (gzip -9 of a >2 GB qemu.log), build root 193 s, image
   upload 164 s, free root disk 146 s, all other steps < 80 s each. The smoke
