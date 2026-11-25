@@ -2,7 +2,81 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
-### >>> UPDATE 2026-11-24 (later) - first-launch crash FIXED in CI smoke; panel 1125x2436; MobileGestalt init block identified <<<
+### >>> UPDATE 2026-11-25 - viewer QMP fixed, input verified end-to-end, launchd-cache kickstart withdrawn, mgprobe <<<
+
+**Interactive session works; the boot is still ~40 min.**  Observed in a real
+local boot (`D:\ios\run\out-live2`, kernel p0095, `--overlay`):
+
+- **Input pipeline verified end to end.**  A viewer/`sweet-input.py` swipe
+  produces `SWEET INPUT: touch down/up ...` in the kernel log *and*
+  `SWEET HID: touch 0 up at 585,507 edge` (the kernel tags the bottom-edge
+  drag as an unlock edge gesture).  The swipe **unlocked** the lock screen -
+  the live frame went from 37 KB (lock screen) to 106 KB (home screen with
+  icons).  The Home key redraws.  Taps open Settings/Safari.
+- **Clicks that "do nothing" are usually dead spots**, not broken input: the
+  two big white squares are `Waiting...` placeholders for apps whose
+  containers do not exist yet.
+- **QEMU's QMP chardev accepts ONE client.**  The viewer used a per-frame
+  connection for grabs *and* a persistent session for input, so the two
+  starved each other (`Connection refused`, silently dropped clicks, and
+  half-open `CLOSE_WAIT` sockets that then blocked everything).  `sweet-view.py`
+  now uses **short-lived sessions** for both grabs and input events (commit
+  `8e1d1c7` + follow-up); the launcher's snapshot loop fits in the gaps.
+- **Viewer window size matters**: at `--scale 2` the window is 562x1218,
+  taller than a 1080p work area, so the bottom of the phone is cut off on
+  screen.  Use `--scale 3` (375x812).
+- **`qemu-sweet.py --secs N` is guest wall time, and hitting it terminates
+  the run.**  A 2700 s limit killed a session seconds after it unlocked (the
+  screen goes black, QMP refuses connections, the launcher log ends with the
+  last snapshots and a `blank_screen` verdict).  Use `--secs 14400` for
+  interactive sessions.
+- **CORRECTION to the previous section**: "first-launch crash FIXED in CI
+  smoke" is wrong.  Run 45313051314 was one lucky smoke; local boots still
+  crash deterministically (`exec SpringBoard` x2, `CRASH SpringBoard` x4 in
+  out-live2).  The race is still present.
+
+**Launchd-cache kickstart experiment: WITHDRAWN (too broad).**  Matching the
+boot-task jobs by cache-key substring (`restore`, `obliterat`, `demo`)
+repurposed ~12 jobs - including `FeatureStore.framework`,
+`MobileObliteration.framework`, `nfrestore` and `com.apple.mobilestoredemod` -
+and there is **no evidence** it makes containermanagerd start earlier (the
+smoke still shows `exec containermanagerd` after SpringBoard).  Hijacking
+unrelated framework binaries is unsafe; the next image keeps exactly ONE
+repurposed job (exact key match) for the probe below.
+
+**MobileGestalt stall (the ~19 min before the UI becomes interactive):**
+- The gestalt SystemGroup container does **not exist in the image**:
+  `private/var/containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache`
+  is absent (the CI `find`/`ls`/`strings` on it print nothing), so there is
+  no `Library/Caches/com.apple.MobileGestalt.plist` cache either.
+- The kernel logs **nothing** about gestalt (the only match in a whole boot
+  log is the boot-args line), so the stall cannot be diagnosed kernel-side.
+- Stall activity profile (ring-buffer line counts, near-identical at guest
+  1200 s and 2400 s => constant-rate busy loop, not a backoff):
+  ~302 x `IOK backboardd: matching IOAcceleratorES`, ~190 x `exec xpcproxy`,
+  ~150 x `SWEET AKS: contextstored sel 17`.
+- **`tools/mgprobe.sh`** (new) is installed to `/usr/local/bin/mgprobe.sh`
+  and is meant to run from ONE hijacked boot job; it records, ten times a
+  minute apart, the SystemGroup listing, the gestalt cache plist, launchctl's
+  state for `com.apple.mobilegestalt.xpc` / `containermanagerd`, and the
+  Bundle/app dirs into `/private/var/log/mgprobe.txt`.  CI dumps that file
+  after the smoke (`--- mgprobe ---`).
+- **It did not run in run 45515580528** (that section is empty): the broad
+  edit above overwrote the job's arguments back to `kickstart`, and no
+  `probe job set:` line was printed.  Next attempt: exact-key match on
+  `com.apple.mobilestoredemod.plist`, plus a workflow `ls -la` of
+  `/usr/local/bin/mgprobe.sh` in the image so the install is confirmed.
+
+**CI runs this session (rootfs):** `45499626699` green (label-only match
+found nothing), `45507572080` green (key match, 7 jobs repurposed wrongly),
+`45515580528` green (mgprobe installed, probe did not run).
+
+**New image on disk:** artifact of `45507572080` (6,255,120,832 B zip)
+downloaded to `D:/ios/dl/`, decompressed to `D:/ios/dl/rootfs-kick3.img.gz`
+(raw 16 GB image, misleading `.gz` suffix) - install as
+`D:/ios/rootfs/rootfs-kick3.img`, keep `rootfs.img` for running sessions.
+
+### >>> UPDATE 2026-11-24 (later) - CI smoke happened to be clean (timing luck, see 2026-11-25); panel 1125x2436; MobileGestalt init block identified <<<
 
 - **`AGENTS.md` rewritten (commit `ce41024`)**: compact current-state guide -
   verified host quirks (no WSL, QEMU under `C:\Program Files\QEMU`, D: artifacts,
