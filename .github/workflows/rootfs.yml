@@ -137,6 +137,7 @@ jobs:
           mkdir -p kernel
           gh release download kernel-latest -D kernel --pattern 'mgprobe' --clobber
           cp kernel/mgprobe tools/mgprobe
+          chmod +x tools/mgprobe
           ls -la tools/mgprobe
         env:
           GH_TOKEN: ${{ github.token }}

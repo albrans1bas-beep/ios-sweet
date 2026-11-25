@@ -318,7 +318,7 @@ PY
 # old mgprobe.sh could never execute. CI builds the helper on the macOS runner
 # and rootfs.yml stages it as tools/mgprobe before this script runs.
 mgprobe_bin="$(dirname "$0")/mgprobe"
-[[ -x $mgprobe_bin ]] || { echo "no compiled mgprobe at $mgprobe_bin" >&2; exit 1; }
+[[ -f $mgprobe_bin ]] || { echo "no compiled mgprobe at $mgprobe_bin" >&2; exit 1; }
 sudo mkdir -p "$work/root/usr/local/bin" "$work/root/private/var/log"
 sudo install -m 755 "$mgprobe_bin" "$work/root/usr/local/bin/mgprobe"
 
