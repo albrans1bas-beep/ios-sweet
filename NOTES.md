@@ -14,8 +14,16 @@
   to the `kernel-latest` release. `mkiosroot.sh` now requires `tools/mgprobe`
   and sets the exact-key job's `ProgramArguments` to `/usr/local/bin/mgprobe`.
   `rootfs.yml` downloads the helper with the kernel and checks its install.
-- CI run `45688514954` (mgprobe helper build/publish) started; next: fast
-  rootfs run to confirm the image installs it, then one full run with smoke.
+- CI run `45688514954` (mgprobe helper build/publish) succeeded in 17 s;
+  `mgprobe` asset is on `kernel-latest`. Two fast verification runs failed on
+  plumbing (fetch step ordered after the build; downloaded mode 0644 rejected
+  by an `-x` check) - fixed in `fd94af8` and `4873621`.
+  Run `45691620875` **green in 7m17s**: `probe job set:` printed and the image
+  contains `-rwxr-xr-x ... /usr/local/bin/mgprobe` (50,592 B).
+- Full run `45696293894` started (`keep_image=true`, `secs=1200`,
+  `snap_every=120`) to produce the image + real `mgprobe.txt`. Check for
+  `--- mgprobe ---` content, `exec SpringBoard` (the smoke greps for it), and
+  fsck-after. If `exec SpringBoard` is missing, rerun with `secs=1800`.
 
 ### >>> UPDATE 2026-11-25 (later) - exact-key probe wired, but the image has no /bin/sh; fast CI mode added <<<
 
