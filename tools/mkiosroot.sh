@@ -313,6 +313,13 @@ with open(p, 'wb') as f:
 	plistlib.dump(d, f, fmt=plistlib.FMT_BINARY)
 print('compiled cache written')
 PY
+# Guest-side MobileGestalt probe: installed into the image and started from a
+# hijacked boot-task job, it records the gestalt container / cache / launchd
+# state while SpringBoard is stuck in its ~19 minute init block.  CI dumps
+# /private/var/log/mgprobe.txt out of the image afterwards.
+sudo mkdir -p "$work/root/usr/local/bin" "$work/root/private/var/log"
+sudo install -m 755 "$(dirname "$0")/mgprobe.sh" "$work/root/usr/local/bin/mgprobe.sh"
+
 # RunAtLoad is ignored by this launchd's cache loader (lsd and
 # containermanagerd both stay demand-started even with RunAtLoad set in
 # the cache), so force containermanagerd to start during EARLY boot
@@ -357,6 +364,25 @@ def edit(o, path=''):
 			edit(v, path)
 
 edit(d)
+
+# The demoted demo-store job is free to use: point it at the guest-side
+# MobileGestalt probe instead (it runs early, the script sleeps first).
+def probe(o):
+	if isinstance(o, dict):
+		for k, v in list(o.items()):
+			if isinstance(v, dict):
+				if 'mobilestoredemod' in str(k).lower() and 				    str(k).endswith('.plist'):
+					v['ProgramArguments'] = ['/bin/sh',
+					    '/usr/local/bin/mgprobe.sh']
+					v.pop('MachServices', None)
+					v['RunAtLoad'] = True
+					print('probe job set:', k)
+				probe(v)
+	elif isinstance(o, list):
+		for v in o:
+			probe(v)
+
+probe(d)
 with open(p, 'wb') as f:
 	plistlib.dump(d, f, fmt=plistlib.FMT_BINARY)
 print('cache with kickstart victims written')
