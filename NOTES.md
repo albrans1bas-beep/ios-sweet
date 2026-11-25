@@ -20,10 +20,20 @@
   by an `-x` check) - fixed in `fd94af8` and `4873621`.
   Run `45691620875` **green in 7m17s**: `probe job set:` printed and the image
   contains `-rwxr-xr-x ... /usr/local/bin/mgprobe` (50,592 B).
-- Full run `45696293894` started (`keep_image=true`, `secs=1200`,
-  `snap_every=120`) to produce the image + real `mgprobe.txt`. Check for
-  `--- mgprobe ---` content, `exec SpringBoard` (the smoke greps for it), and
-  fsck-after. If `exec SpringBoard` is missing, rerun with `secs=1800`.
+- Full run `45696293894` failed on `userspace panic: unexpected exec of
+  non-platform binary: /usr/local/bin/mgprobe` - the helper was **unsigned**.
+  Commit `b1ea796`: `mgprobe.yml` now ad-hoc codesigns it (`Signature=adhoc`),
+  and short smokes skip the `exec SpringBoard` assertion.
+- Short run `45704132345` was green (no panic, `exec mgprobe` succeeded) but
+  the helper exited 1: the hijacked job is in the **user/501** domain, so
+  `mobile` cannot create root-owned `/private/var/log/mgprobe.txt`.
+  Commit `960bf7b`: output moved to
+  `/private/var/mobile/Library/Caches/mgprobe.txt` (dir created owner 501).
+- Short run `45711168406` green: the probe log in the image had only
+  `mgprobe start (compiled helper)` - later lines were dirty in the page cache
+  when QEMU was SIGKILLed. Commit `1f9912b`: fsync after every line.
+  Helper rebuild `45716110085` in flight; next is a full run with
+  `keep_image=true`, `secs=1200` to capture all 10 probe iterations.
 
 ### >>> UPDATE 2026-11-25 (later) - exact-key probe wired, but the image has no /bin/sh; fast CI mode added <<<
 
