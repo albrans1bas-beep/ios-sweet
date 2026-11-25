@@ -15,6 +15,10 @@ on:
         description: 'Framebuffer snapshot interval in seconds'
         type: string
         default: '120'
+      skip_smoke:
+        description: 'Skip the 20-30 min QEMU smoke (fast image-only build/diagnostics)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -225,6 +229,7 @@ jobs:
         run: python3 tools/mkadt.py "$BIG"/sweet-qemu.adt --qemu
 
       - name: QEMU smoke test
+        if: ${{ !inputs.skip_smoke }}
         run: |
           python3 tools/mkpayload.py kernel/kernel.development.sweet "$BIG"/sweet-qemu.adt \
             "$BIG"/payload.bin --cmdline "rd=vroot0 debug=0xc serial=3 cpus=1 keepsyms=1 unentitled_ios_sim_launch ignition_level=1 launchd_unsecure_cache=1 launchd_ios_sessions=1 sweetvio_test=1 sweetfb_noconsole=1 sweetproc_dump=600 sweet_exit_trace=1 sweet_sample=450 sweet_sample_names=SpringBoard,MobileGestaltHel,lsd,cfprefsd,containermanager,launchd,backboardd sweet_nosync=1 -enable_kprintf_spam -noprogress wdt=-1"
@@ -272,7 +277,7 @@ jobs:
           grep -a 'SWEET SECTOK:\|SWEET MULTIUSER:' sweetlog.txt | head -40 || true
 
       - name: Symbolicate SpringBoard samples
-        if: always()
+        if: always() && !inputs.skip_smoke
         run: |
           [ -f sweetlog.txt ] || exit 0
           python3 - <<'EOF' > sample-addrs.txt
@@ -344,7 +349,7 @@ jobs:
           done
 
       - name: Symbolicate known SpringBoard crash stack
-        if: always()
+        if: always() && !inputs.skip_smoke
         run: |
           sudo mkdir -p /mnt/crash
           sudo fsck.hfsplus -fy "$BIG"/rootfs.img >/dev/null 2>&1 || true
@@ -416,6 +421,8 @@ jobs:
           sudo strings -a /mnt/post/sbin/launchd 2>/dev/null | grep -iE 'usersession|user_session|libinfo|multiuser|foreground|vproc|trap|session' | head -80 || true
           echo "--- introspection tools ---"
           for f in /mnt/post/bin/sh /mnt/post/bin/launchctl /mnt/post/usr/bin/launchctl /mnt/post/usr/bin/sample /mnt/post/usr/bin/log; do printf '%s: ' $f; sudo test -x $f && echo yes || echo no; done
+          echo "--- shell/launchctl candidates in the image ---"
+          sudo find /mnt/post -maxdepth 5 \( -name sh -o -name bash -o -name launchctl -o -name zsh \) -printf '%y %m %p -> %l\n' 2>/dev/null | head -60 || true
           echo "--- entitlements ---"
           for b in /mnt/post/sbin/launchd /mnt/post/usr/libexec/usermanagerd /mnt/post/usr/libexec/lsd; do
             echo "## $b"
@@ -564,8 +571,9 @@ jobs:
           cp qemu-out/fb.png qemu-out/fb.txt qemu-out/regs.txt \
             qemu-out/result.json qemu-out/serial.txt \
             qemu-out/sweet_log_ring.bin qemu-out/sweet_log_total.bin stage-logs/ 2>/dev/null || true
-          # The raw console log is >2 GB; gzip it so the artifact stays small.
-          gzip -9 -c qemu-out/qemu.log > stage-logs/qemu.log.gz 2>/dev/null || true
+          # The raw console log is >2 GB; gzip -1 keeps the artifact small
+          # without spending minutes on -9 compression.
+          gzip -1 -c qemu-out/qemu.log > stage-logs/qemu.log.gz 2>/dev/null || true
           cp qemu-out/fb-[0-9]*s.png stage-logs/ 2>/dev/null || true
           echo "--- snapshot files ---"
           ls -la qemu-out/fb-*s.png 2>/dev/null || true
