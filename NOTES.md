@@ -2,6 +2,24 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-11-25 (later) - exact-key mgprobe wiring committed, CI run 45684342945 in flight <<<
+
+- Commit `cfdb82b`: `mkiosroot.sh` now repurposes **only** the exact compiled-cache
+  key `/System/Library/LaunchDaemons/com.apple.mobilestoredemod.plist` for
+  `mgprobe.sh`, prints `probe job set:`, and **fails the build** if that key is
+  absent. All broad substring kickstart edits (`restore`/`obliterat`/`demo`,
+  ~12 framework binaries) are removed; containermanagerd pre-warm is dropped.
+  CI also `ls -la`s the installed probe script after the smoke.
+- CI run `45684342945` (rootfs, `keep_image=true`, `secs=1200`,
+  `snap_every=120`) started 2026-11-25 to test this. **Result pending** - check
+  for `probe job set:` in "Build the HFS+ root", the `mgprobe.sh` install line,
+  and `--- mgprobe ---` content. If `exec SpringBoard` is missing (the smoke
+  step greps for it), rerun with `secs=1800`.
+- CI cost measured from run `45515580528` (~46 min total): QEMU smoke 1801 s,
+  stage/compress 241 s (gzip -9 of a >2 GB qemu.log), build root 193 s, image
+  upload 164 s, free root disk 146 s, all other steps < 80 s each. The smoke
+  `--secs` input dominates.
+
 ### >>> UPDATE 2026-11-25 - viewer QMP fixed, input verified end-to-end, launchd-cache kickstart withdrawn, mgprobe <<<
 
 **Interactive session works; the boot is still ~40 min.**  Observed in a real
