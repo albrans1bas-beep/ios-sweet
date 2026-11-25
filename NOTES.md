@@ -77,6 +77,21 @@ repurposed job (exact key match) for the probe below.
 found nothing), `45507572080` green (key match, 7 jobs repurposed wrongly),
 `45515580528` green (mgprobe installed, probe did not run).
 
+**Next steps (agreed 2026-11-25):**
+1. Fix the probe wiring: match ONLY the exact cache key
+   `/System/Library/LaunchDaemons/com.apple.mobilestoredemod.plist` (no
+   substring recursion), print `probe job set:`, and add a workflow
+   `ls -la /mnt/post/usr/local/bin/mgprobe.sh` so the install is confirmed
+   in the same run.
+2. Boot a fresh session from the NEW image (`rootfs-kick3.img`, artifact of
+   `45507572080`): 7 boot jobs kickstart containermanagerd and the smoke
+   showed 0 SpringBoard crashes, so it may skip the ~5 min crash leg.
+3. When the next mgprobe output lands, read `/private/var/log/mgprobe.txt`
+   for: does the gestalt SystemGroup container get created, does
+   `com.apple.MobileGestalt.plist` appear, is MobileGestaltHelper running
+   and what state does launchctl report - that decides the stall fix
+   (pre-seed CacheExtra vs repair the helper path).
+
 **New image on disk:** artifact of `45507572080` (6,255,120,832 B zip)
 downloaded to `D:/ios/dl/`, decompressed to `D:/ios/dl/rootfs-kick3.img.gz`
 (raw 16 GB image, misleading `.gz` suffix) - install as
