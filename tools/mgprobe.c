@@ -5,8 +5,9 @@
  * tiny standalone Mach-O built with the iphoneos SDK and launched directly by
  * a repurposed launchd boot job. It records the gestalt SystemGroup container,
  * the on-disk cache plist, and the processes that are alive while SpringBoard
- * sits in its ~19 minute libMobileGestalt init block. CI copies the output out
- * of the image after the smoke run (`--- mgprobe ---`).
+ * sits in its ~19 minute libMobileGestalt init block. The job is in the
+ * user/501 domain, so output goes to mobile's Caches; CI copies it out of the
+ * image after the smoke run (`--- mgprobe ---`).
  */
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -21,7 +22,8 @@
 #include <time.h>
 #include <unistd.h>
 
-#define OUT "/private/var/log/mgprobe.txt"
+/* The hijacked job runs in the user/501 domain as mobile, not root: /private/var/log is root-owned. */
+#define OUT "/private/var/mobile/Library/Caches/mgprobe.txt"
 #define GESTDIR "/private/var/containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache"
 #define GESTPLIST GESTDIR "/Library/Caches/com.apple.MobileGestalt.plist"
 
@@ -132,8 +134,10 @@ int main(void)
 	int i;
 
 	out = fopen(OUT, "w");
-	if (out == NULL)
+	if (out == NULL) {
+		fprintf(stderr, "mgprobe: cannot open %s: %s\n", OUT, strerror(errno));
 		return 1;
+	}
 	line("mgprobe start (compiled helper)");
 	sleep(240);
 	for (i = 0; i < 10; i++) {

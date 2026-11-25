@@ -320,6 +320,8 @@ PY
 mgprobe_bin="$(dirname "$0")/mgprobe"
 [[ -f $mgprobe_bin ]] || { echo "no compiled mgprobe at $mgprobe_bin" >&2; exit 1; }
 sudo mkdir -p "$work/root/usr/local/bin" "$work/root/private/var/log"
+# The probe job runs as mobile (user/501); make sure it can write its log.
+sudo install -d -o 501 -g 501 -m 0755 "$work/root/private/var/mobile/Library/Caches"
 sudo install -m 755 "$mgprobe_bin" "$work/root/usr/local/bin/mgprobe"
 
 # Repurpose exactly ONE job - the demoted demo-store job - to run the probe.
