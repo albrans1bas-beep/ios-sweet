@@ -30,6 +30,12 @@ local boot (`D:\ios\run\out-live2`, kernel p0095, `--overlay`):
   screen goes black, QMP refuses connections, the launcher log ends with the
   last snapshots and a `blank_screen` verdict).  Use `--secs 14400` for
   interactive sessions.
+- **QEMU also exits early on its own**: `live3` (14400 s limit) died at
+  guest ~12000 s with returncode 4294967295 (-1) while the screen sat idle;
+  `qemu.log` shows only ordinary IRQ exception traces, no panic line.
+  Treat long sessions as disposable: restart on exit, and always pass
+  `--dump-symbol sweet_log_ring:0x400000 --dump-symbol sweet_log_total:8`
+  so the last guest state stays recoverable from the ring dump.
 - **CORRECTION to the previous section**: "first-launch crash FIXED in CI
   smoke" is wrong.  Run 45313051314 was one lucky smoke; local boots still
   crash deterministically (`exec SpringBoard` x2, `CRASH SpringBoard` x4 in
@@ -139,7 +145,8 @@ lock screen in ~20 min, UNCROPPED UI, touch 1:1.
 
 ### >>> UPDATE 2026-11-24 - FULLY INTERACTIVE: unlock, home screen, Settings app <<<
 
-**The emulator is now interactive end to end** (run `D:\iosun\out-final2`,
+**The emulator is now interactive end to end** (run `D:\ios
+un\out-final2`,
 clean image + `--overlay`, kernel 0092, both input devices):
 
 1. Boot: root mounts through the qcow2 overlay with **0** hfs corruption.
