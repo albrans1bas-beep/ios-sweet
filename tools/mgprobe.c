@@ -37,6 +37,9 @@ static void line(const char *fmt, ...)
 	va_end(ap);
 	fputc('\n', out);
 	fflush(out);
+	/* QEMU is SIGKILLed at the end of the smoke: without fsync the lines are
+	 * still dirty in the page cache and the image only shows the first one. */
+	fsync(fileno(out));
 }
 
 static void dump_tree(const char *path, int depth)
