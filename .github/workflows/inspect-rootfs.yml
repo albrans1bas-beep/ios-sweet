@@ -43,7 +43,11 @@ jobs:
             sudo modprobe hfsplus
           }
           img=$(find dl -name '*.gz' | head -1)
+          sudo mkdir -p /mnt/heavy
+          sudo chown -R runner /mnt/heavy
+          df -h /mnt
           gunzip -c "$img" > /mnt/heavy/rootfs.img
+          ls -la /mnt/heavy/rootfs.img
           sudo mkdir -p /mnt/ro
           sudo mount -t hfsplus -o loop,ro,force /mnt/heavy/rootfs.img /mnt/ro
           echo "--- ${{ inputs.path }} ---"
