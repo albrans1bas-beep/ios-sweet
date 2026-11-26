@@ -1,0 +1,55 @@
+name: inspect-rootfs
+
+# Mount an ios-rootfs artifact from a previous run and print one file from it.
+# Used to read the guest probe log without rebuilding/re-running the smoke.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: rootfs run ID that produced the ios-rootfs artifact
+        required: true
+      path:
+        description: path inside the image
+        default: /private/var/mobile/Library/Caches/mgprobe.txt
+      tail_lines:
+        description: print only the last N lines (0 = all)
+        default: "0"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download image artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dl
+          gh run download "${{ inputs.run_id }}" -n ios-rootfs -D dl
+          ls -la dl
+
+      - name: Mount and print
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends hfsprogs
+          sudo modprobe hfsplus 2>/dev/null || {
+            sudo apt-get install -y "linux-modules-extra-$(uname -r)"
+            sudo modprobe hfsplus
+          }
+          img=$(find dl -name '*.gz' | head -1)
+          gunzip -c "$img" > /mnt/heavy/rootfs.img
+          sudo mkdir -p /mnt/ro
+          sudo mount -t hfsplus -o loop,ro,force /mnt/heavy/rootfs.img /mnt/ro
+          echo "--- ${{ inputs.path }} ---"
+          if [ "${{ inputs.tail_lines }}" = "0" ]; then
+            sudo cat "/mnt/ro${{ inputs.path }}" || true
+          else
+            sudo tail -n "${{ inputs.tail_lines }}" "/mnt/ro${{ inputs.path }}" || true
+          fi
+          sudo umount /mnt/ro || true
