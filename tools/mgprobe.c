@@ -111,10 +111,11 @@ static int want_proc(const char *name)
  * the parent waits 20 s, logs HANG if the child is still alive, kills it
  * and moves on. */
 static const char *mg_keys[];
+#define N_MG_KEYS 12
 static void try_mg(int i);
 static void try_mg_fork(int i)
 {
-	const char *key = mg_keys[i % (sizeof(mg_keys) / sizeof(mg_keys[0]))];
+	const char *key = mg_keys[i % N_MG_KEYS];
 	pid_t pid = fork();
 	int st;
 
