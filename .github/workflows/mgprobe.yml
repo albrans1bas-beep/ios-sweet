@@ -19,7 +19,8 @@ jobs:
       - name: Build guest helper
         run: |
           xcrun -sdk iphoneos clang -arch arm64 -miphoneos-version-min=16.0 \
-            -O2 -Wall -o mgprobe tools/mgprobe.c
+            -O2 -Wall -o mgprobe tools/mgprobe.c \
+            -framework CoreFoundation
           # SWEET's AMFI patch marks signed rootfs binaries as platform
           # binaries; an unsigned exec panics with "non-platform binary".
           codesign --force --sign - --timestamp=none mgprobe

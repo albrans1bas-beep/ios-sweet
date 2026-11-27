@@ -21,6 +21,8 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <dlfcn.h>
+#include <CoreFoundation/CoreFoundation.h>
 
 /* The hijacked job runs in the user/501 domain as mobile, not root: /private/var/log is root-owned. */
 #define OUT "/private/var/mobile/Library/Caches/mgprobe.txt"
@@ -101,6 +103,58 @@ static int want_proc(const char *name)
 	       strcasestr(name, "SpringBoard") != NULL;
 }
 
+/* One MGCopyAnswer call per iteration: the line before the call is fsynced,
+ * so if the guest hangs on a key the log names it exactly.  Keys are the
+ * ones IconServices/-[ISDefaults init] and SpringBoard's first launch are
+ * known to ask for, plus basic ones that must come from the kernel. */
+static const char *mg_keys[] = {
+	"ProductType",
+	"HardwareModel",
+	"MainScreenScale",
+	"MainScreenWidth",
+	"MainScreenHeight",
+	"ArtworkDevice1ProductDescription",
+	"ArtworkDevice2ProductDescription",
+	"DeviceColor",
+	"UserAssignedDeviceName",
+	"ModelNumber",
+};
+
+static void try_mg(int i)
+{
+	static void (*mg)(CFStringRef, Boolean *) ;
+	static int tried;
+	const char *key = mg_keys[i % (sizeof(mg_keys) / sizeof(mg_keys[0]))];
+	CFStringRef val;
+	char buf[256];
+
+	if (!tried) {
+		void *h = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_NOW);
+		tried = 1;
+		if (h == NULL) {
+			line("  dlopen libMobileGestalt: %s", dlerror());
+			return;
+		}
+		mg = (void (*)(CFStringRef, Boolean *))dlsym(h, "MGCopyAnswer");
+		line("  dlopen ok, MGCopyAnswer=%p", (void *)mg);
+		if (mg == NULL)
+			return;
+	}
+	if (mg == NULL)
+		return;
+	line("  MGCopyAnswer(%s) calling...", key);
+	CFStringRef k = CFStringCreateWithCString(NULL, key, kCFStringEncodingUTF8);
+	val = mg(k, NULL);
+	if (val == NULL) {
+		line("  MGCopyAnswer(%s) -> NULL", key);
+	} else if (CFStringGetCString(val, buf, sizeof(buf), kCFStringEncodingUTF8)) {
+		line("  MGCopyAnswer(%s) -> %s", key, buf);
+	} else {
+		line("  MGCopyAnswer(%s) -> <non-string %p>", key, (void *)val);
+	}
+	CFRelease(k);
+}
+
 static void list_procs(void)
 {
 	int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0 };
@@ -156,6 +210,10 @@ int main(void)
 		dump_file(GESTPLIST);
 		line("$ interesting processes:");
 		list_procs();
+		line("$ MGCopyAnswer test %d:", i);
+		try_mg(i);
+		line("$ client gestalt plist:");
+		dump_file("/private/var/preferences/com.apple.MobileGestalt.plist");
 		line("$ Bundle dirs:");
 		dump_tree("/private/var/containers/Bundle/Application", 2);
 		line("");
