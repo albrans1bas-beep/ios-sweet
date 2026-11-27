@@ -118,6 +118,12 @@ static const char *mg_keys[] = {
 	"DeviceColor",
 	"UserAssignedDeviceName",
 	"ModelNumber",
+	/* Helper-backed keys LAST: if the MobileGestaltHelper XPC round trip
+	 * is what blocks SpringBoard for ~19 minutes, these iterations log
+	 * "calling..." and never return - exactly the evidence we want, and
+	 * the earlier iterations have already landed (fsync per line). */
+	"SerialNumber",
+	"UniqueDeviceID",
 };
 
 static void try_mg(int i)
@@ -197,7 +203,7 @@ int main(void)
 	}
 	line("mgprobe start (compiled helper)");
 	sleep(240);
-	for (i = 0; i < 10; i++) {
+	for (i = 0; i < 12; i++) {
 		now = time(NULL);
 		strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", gmtime(&now));
 		line("--- iteration %d %s", i, stamp);

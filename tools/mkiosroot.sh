@@ -324,6 +324,52 @@ sudo mkdir -p "$work/root/usr/local/bin" "$work/root/private/var/log"
 sudo install -d -o 501 -g 501 -m 0755 "$work/root/private/var/mobile/Library/Caches"
 sudo install -m 755 "$mgprobe_bin" "$work/root/usr/local/bin/mgprobe"
 
+# Pre-seed the client-side gestalt cache.  On a real device
+# /private/var/preferences/com.apple.MobileGestalt.plist holds a CacheExtra
+# dict that MGCopyAnswer consults BEFORE asking the helper; our image has
+# neither the file nor the helper's SystemGroup container (the probe
+# confirmed both missing), and SpringBoard's -[ISDefaults init] blocks
+# ~19 minutes in libMobileGestalt waiting on the helper round trip.
+# CacheExtra-only plists are what jailbreak device spoofers write, so a
+# minimal one is a known-good shape; if MobileGestalt rejects it, nothing
+# changes (it falls back to today's behaviour).
+sudo install -d -o 501 -g 501 -m 0755 "$work/root/private/var/preferences"
+sudo python3 - "$work/root/private/var/preferences/com.apple.MobileGestalt.plist" <<'PYMG'
+import plistlib, sys
+extra = {
+    # d22ap (iPhone X) facts; scale/size must match the panel we report
+    'ProductType': 'iPhone10,3',
+    'HardwareModel': 'D22AP',
+    'ModelNumber': 'MQA82LL/A',
+    'RegionCode': 'LL/A',
+    'MainScreenScale': 3,
+    'MainScreenWidth': 1125,
+    'MainScreenHeight': 2436,
+    'MainScreenWidthPoints': 375,
+    'MainScreenHeightPoints': 812,
+    'MainScreenPPI': 458,
+    'ArtworkDevice1ProductDescription': 'D22AP',
+    'ArtworkDevice2ProductDescription': 'D22AP',
+    'DeviceColor': '1',
+    'DeviceEnclosureColor': '1',
+    'UserAssignedDeviceName': 'iPhone',
+    'DeviceClass': 'iPhone',
+    'DeviceName': 'iPhone X',
+    'CPUArchitecture': 'arm64e',
+    'ChipID': 24576,          # 0x6000 = A11
+    'BoardId': 6,
+    'BatterySerialNumber': 'SWEET0001',
+    'MobileEquipmentIdentifier': '3532871100000000',
+    'SerialNumber': 'SWEET0000000001',
+    'UniqueDeviceID': '0000000000000000000000000000000000000001',
+    'UniqueChipID': 0,
+}
+plist = {'CacheExtra': extra, 'CacheVersion': 1}
+with open(sys.argv[1], 'wb') as f:
+    plistlib.dump(plist, f, fmt=plistlib.FMT_BINARY)
+print('gestalt CacheExtra seeded:', len(extra), 'keys')
+PYMG
+
 # Repurpose exactly ONE job - the demoted demo-store job - to run the probe.
 # An earlier attempt matched boot-task jobs by substring ('restore',
 # 'obliterat', 'demo') and hijacked ~12 unrelated framework binaries without
