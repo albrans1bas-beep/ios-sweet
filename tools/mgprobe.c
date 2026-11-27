@@ -110,6 +110,8 @@ static int want_proc(const char *name)
  * child does the blocking MGCopyAnswer and prints the result line itself;
  * the parent waits 20 s, logs HANG if the child is still alive, kills it
  * and moves on. */
+static const char *mg_keys[];
+static void try_mg(int i);
 static void try_mg_fork(int i)
 {
 	const char *key = mg_keys[i % (sizeof(mg_keys) / sizeof(mg_keys[0]))];
