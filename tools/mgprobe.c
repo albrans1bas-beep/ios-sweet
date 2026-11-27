@@ -135,7 +135,7 @@ static void try_mg(int i)
 			line("  dlopen libMobileGestalt: %s", dlerror());
 			return;
 		}
-		mg = (void (*)(CFStringRef, Boolean *))dlsym(h, "MGCopyAnswer");
+		*(void **)&mg = dlsym(h, "MGCopyAnswer");
 		line("  dlopen ok, MGCopyAnswer=%p", (void *)mg);
 		if (mg == NULL)
 			return;
