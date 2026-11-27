@@ -21,7 +21,10 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <signal.h>
+#include <sys/wait.h>
 #include <dlfcn.h>
+#include <mach-o/dyld.h>
 #include <CoreFoundation/CoreFoundation.h>
 
 /* The hijacked job runs in the user/501 domain as mobile, not root: /private/var/log is root-owned. */
@@ -103,10 +106,51 @@ static int want_proc(const char *name)
 	       strcasestr(name, "SpringBoard") != NULL;
 }
 
-/* One MGCopyAnswer call per iteration: the line before the call is fsynced,
- * so if the guest hangs on a key the log names it exactly.  Keys are the
- * ones IconServices/-[ISDefaults init] and SpringBoard's first launch are
- * known to ask for, plus basic ones that must come from the kernel. */
+/* Fork per call: a hung key must not eat the remaining iterations.  The
+ * child does the blocking MGCopyAnswer and prints the result line itself;
+ * the parent waits 20 s, logs HANG if the child is still alive, kills it
+ * and moves on. */
+static void try_mg_fork(int i)
+{
+	const char *key = mg_keys[i % (sizeof(mg_keys) / sizeof(mg_keys[0]))];
+	pid_t pid = fork();
+	int st;
+
+	if (pid == 0) {
+		try_mg(i);
+		_exit(0);
+	}
+	sleep(20);
+	if (kill(pid, 0) == 0) {
+		line("  HANG: %s still blocked after 20 s - killing child %d",
+		     key, (int)pid);
+		kill(pid, SIGKILL);
+		waitpid(pid, &st, 0);
+	} else {
+		waitpid(pid, &st, 0);
+	}
+}
+
+/* The sampler's 'slide' did not map to the shared-cache load address (two
+ * symbolicate runs resolved to unrelated frameworks), so print the load
+ * address of every image directly - libMobileGestalt's header address minus
+ * its unslid address IS the cache slide, no guessing. */
+static void dump_images(void)
+{
+	uint32_t n = _dyld_image_count();
+	uint32_t i;
+
+	for (i = 0; i < n; i++) {
+		const char *name = _dyld_get_image_name(i);
+		if (name != NULL && (strstr(name, "MobileGestalt") != NULL ||
+		    strstr(name, "libsystem_kernel") != NULL ||
+		    strstr(name, "libxpc") != NULL))
+			line("  img %u %s hdr %p slide 0x%llx", i, name,
+			     _dyld_get_image_header(i),
+			     (unsigned long long)_dyld_get_image_vmaddr_slide(i));
+	}
+	line("  images total %u", n);
+}
 static const char *mg_keys[] = {
 	"ProductType",
 	"HardwareModel",
@@ -202,6 +246,8 @@ int main(void)
 		return 1;
 	}
 	line("mgprobe start (compiled helper)");
+	line("$ dyld images:");
+	dump_images();
 	sleep(240);
 	for (i = 0; i < 12; i++) {
 		now = time(NULL);
@@ -217,7 +263,7 @@ int main(void)
 		line("$ interesting processes:");
 		list_procs();
 		line("$ MGCopyAnswer test %d:", i);
-		try_mg(i);
+		try_mg_fork(i);
 		line("$ client gestalt plist:");
 		dump_file("/private/var/preferences/com.apple.MobileGestalt.plist");
 		line("$ Bundle dirs:");
