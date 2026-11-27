@@ -122,7 +122,7 @@ static const char *mg_keys[] = {
 
 static void try_mg(int i)
 {
-	static void (*mg)(CFStringRef, Boolean *) ;
+	static CFStringRef (*mg)(CFStringRef, Boolean *);
 	static int tried;
 	const char *key = mg_keys[i % (sizeof(mg_keys) / sizeof(mg_keys[0]))];
 	CFStringRef val;
