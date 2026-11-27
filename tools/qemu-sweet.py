@@ -351,7 +351,12 @@ def main():
     ram_gib = max(4, -(-(phys_base + mem_size - 0x40000000) // (1 << 30)))
     qemu = find_qemu()
     display_args = ['-display', a.display] if a.display else ['-nographic']
-    cmd = [qemu, '-M', 'virt,gic-version=3', '-cpu', a.cpu, '-smp', '1', '-m', f'{ram_gib}G']
+    cmd = [qemu, '-M', 'virt,gic-version=3', '-cpu', a.cpu, '-smp', '1', '-m', f'{ram_gib}G',
+           # iOS generates ~5 GB of translated code per boot; the 1 GiB
+           # default code cache fills and flushes fully every few minutes
+           # (vphone-linux measured 14 flushes in 49 min), retranslating
+           # everything the guest runs next.  2 GiB is x86-64's maximum.
+           '-accel', 'tcg,tb-size=2048']
     if a.gpu:
         # QMP input-send-event targets a *graphics device* (console owner) and
         # the console then routes the event to the guest's input device, so
