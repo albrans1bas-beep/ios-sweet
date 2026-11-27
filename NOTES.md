@@ -2,6 +2,55 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-11-27 - the stall is the MobileGestaltHelper XPC round trip; probe now maps every key <<<
+
+**mgprobe evidence (runs inside iOS as mobile, one iteration/minute):**
+
+- The gestalt SystemGroup container is NEVER created (10/10 iterations,
+  guest 4:47-14:37) while other daemons' containers (lsd.iconscache,
+  configurationprofiles, nsurlstoragedresources, ...) DO exist with MCM
+  metadata plists.  `/private/var/containers/Bundle/Application` is also
+  missing - that is why every icon renders as `Waiting...`.
+- In-process `MGCopyAnswer` returns FAST: `ProductType` -> `iPhone10,3`
+  (the kernel device tree answers correctly!), `HardwareModel` /
+  `MainScreenScale` -> NULL when no cache file exists.  So the ~19-minute
+  SpringBoard block is NOT a slow in-process answer - it is the
+  **MobileGestaltHelper XPC round trip** (matches the sampled
+  `dispatch_semaphore_wait` inside libMobileGestalt).
+- **With the seeded CacheExtra plist present, `MGCopyAnswer(MainScreenScale)`
+  HANGS** (run 45997115265: iteration 2 logged `calling...`, iterations
+  3-11 never ran).  Reading the cache sends MG into the cache-refresh path
+  -> helper XPC -> the same hang.  The helper round trip is confirmed.
+- Kernel sampler stacks of the helper during the stall (tb2k ring dumps):
+  t0 frozen at the same PC every 600 s (blocked, not spinning),
+  `pc 0x1c54b5030 lr 0x1c54c6b18 bt ... 0x189d00148 0x189d012e0
+  0x189d05d20 0x189d44bec 0x1004f6844 0x1a74c8344`.  Two symbolicate runs
+  of these addresses resolved to unrelated frameworks
+  (UserNotificationsUIKit / UIKitCore / ANECompiler) - the sampler's
+  `slide` field does not map to the shared-cache load address the way we
+  assumed; the probe now prints its dyld image list so the cache slide is
+  measured, not guessed (MGCopyAnswer=0x1da1ba994 in run 45952003614 with
+  the known-good unslid 0x19c556994 pins the CI cache slide at 0x3dc64000).
+
+**Fix candidate in the image now:** mkiosroot pre-seeds
+`/private/var/preferences/com.apple.MobileGestalt.plist` with a 25-key
+CacheExtra dict (d22ap facts, jailbreak-spoofed plist shape).  It did not
+prevent the hang (the probe hung on MainScreenScale with it present); the
+next probe run (fork per key, 20 s timeout) will map WHICH keys hang and
+whether helper-backed keys (SerialNumber, UniqueDeviceID) hang worse.
+
+**mgprobe v3 (commit series around 46021397068):** fork per MGCopyAnswer
+call - the child calls and prints, the parent waits 20 s, logs `HANG: <key>
+still blocked`, kills the child and continues; dumps the dyld image list
+(header address + slide per image) once at start; asks 12 keys over 12
+iterations including the helper-backed ones last.
+
+**tb-size=2048 timing test (out-tb2k):** inconclusive - the host slept
+mid-run (monitor log jumps 08:27->12:09) so wall-clock comparison is
+polluted; the guest-time arc looked unchanged (wake ~2400 s).  The change
+stays (it is free and correct), but re-measure only after the guest-side
+fix lands.
+
 ### >>> UPDATE 2026-11-25 (later still) - compiled mgprobe helper, fast image-only CI works <<<
 
 - Run `45685659077` (`skip_smoke=true`, `keep_image=false`) completed in
