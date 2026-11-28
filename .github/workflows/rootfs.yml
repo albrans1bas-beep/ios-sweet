@@ -452,6 +452,28 @@ jobs:
           echo "--- mgprobe (guest-side gestalt probe) ---"
           sudo ls -la /mnt/post/usr/local/bin/mgprobe 2>&1 || true
           sudo cat /mnt/post/private/var/mobile/Library/Caches/mgprobe.txt 2>/dev/null | head -200 || true
+          echo "--- compiled cache: the mobilegestalt.xpc job ---"
+          sudo python3 - <<'PYMGJOB' 2>&1 || true
+          import plistlib
+          p = plistlib.load(open('/mnt/post/System/Library/xpc/launchd.plist', 'rb'))
+          key = '/System/Library/LaunchDaemons/com.apple.mobilegestalt.xpc.plist'
+          found = []
+          def walk(o):
+              if isinstance(o, dict):
+                  for k, v in o.items():
+                      if k == key and isinstance(v, dict):
+                          found.append(v)
+                      walk(v)
+              elif isinstance(o, list):
+                  for v in o:
+                      walk(v)
+          walk(p)
+          print('mobilegestalt.xpc jobs in cache:', len(found))
+          for j in found:
+              print('  Label:', j.get('Label'), 'MachServices:', j.get('MachServices'),
+                    'Program:', j.get('Program') or j.get('ProgramArguments'),
+                    'UserName:', j.get('UserName'), 'RunAtLoad:', j.get('RunAtLoad'))
+          PYMGJOB
           echo "--- gestalt cache ---"
           sudo find /mnt/post/private/var/containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache -maxdepth 5 -printf '%s %p\n' 2>/dev/null | head -30 || true
           sudo ls -la /mnt/post/private/var/containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache/Library/Caches 2>/dev/null || true

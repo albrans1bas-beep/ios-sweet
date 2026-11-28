@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <spawn.h>
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -109,27 +110,41 @@ static int want_proc(const char *name)
 /* Fork per call: a hung key must not eat the remaining iterations.  The
  * child does the blocking MGCopyAnswer and prints the result line itself;
  * the parent waits 20 s, logs HANG if the child is still alive, kills it
- * and moves on. */
+ * and moves on.
+ *
+ * REPLACED by posix_spawn: fork children HUNG ON EVERY KEY (run
+ * 46021587214) because a forked child inherits broken Mach port state -
+ * its first XPC wedges regardless of the key.  A spawned fresh process
+ * tests each key the way SpringBoard's first contact does. */
 static const char *mg_keys[];
 #define N_MG_KEYS 12
 static void try_mg(int i);
-static void try_mg_fork(int i)
+
+static void try_mg_spawn(int i)
 {
 	const char *key = mg_keys[i % N_MG_KEYS];
-	pid_t pid = fork();
-	int st;
+	char arg[16];
+	pid_t pid = -1;
+	int st = 0, n;
+	extern char **environ;
 
-	if (pid == 0) {
-		try_mg(i);
-		_exit(0);
+	snprintf(arg, sizeof(arg), "%d", i);
+	line("  spawn self for %s...", key);
+	n = posix_spawn(&pid, "/usr/local/bin/mgprobe", NULL, NULL,
+	    (char *[]){ (char *)"mgprobe", arg, NULL }, environ);
+	if (n != 0) {
+		line("  ! posix_spawn: %s", strerror(n));
+		return;
 	}
-	sleep(20);
-	if (kill(pid, 0) == 0) {
+	for (n = 0; n < 20; n++) {
+		sleep(1);
+		if (waitpid(pid, &st, WNOHANG) == pid)
+			break;
+	}
+	if (n >= 20) {
 		line("  HANG: %s still blocked after 20 s - killing child %d",
 		     key, (int)pid);
 		kill(pid, SIGKILL);
-		waitpid(pid, &st, 0);
-	} else {
 		waitpid(pid, &st, 0);
 	}
 }
@@ -237,16 +252,23 @@ static void list_procs(void)
 	free(p);
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
 	char stamp[64];
 	time_t now;
 	int i;
 
-	out = fopen(OUT, "w");
+	out = fopen(OUT, argc > 1 ? "a" : "w");
 	if (out == NULL) {
 		fprintf(stderr, "mgprobe: cannot open %s: %s\n", OUT, strerror(errno));
 		return 1;
+	}
+	if (argc > 1) {
+		/* Spawned child: one MGCopyAnswer call in a pristine process,
+		 * exactly like SpringBoard's first contact. */
+		try_mg(atoi(argv[1]));
+		fclose(out);
+		return 0;
 	}
 	line("mgprobe start (compiled helper)");
 	line("$ dyld images:");
@@ -266,7 +288,7 @@ int main(void)
 		line("$ interesting processes:");
 		list_procs();
 		line("$ MGCopyAnswer test %d:", i);
-		try_mg_fork(i);
+		try_mg_spawn(i);
 		line("$ client gestalt plist:");
 		dump_file("/private/var/preferences/com.apple.MobileGestalt.plist");
 		line("$ Bundle dirs:");
