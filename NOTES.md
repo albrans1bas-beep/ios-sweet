@@ -2,6 +2,59 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-11-28 - the stall chain decoded: SpringBoard -> lsd -> MobileGestaltHelper <<<
+
+**Root cause pinned by symbolicated samples (run 46021587214's auto-sample
+step, with the cache slide measured by the probe, not guessed):**
+
+- SpringBoard's blocked queue: `mach_msg2_trap <- mach_msg <-
+  _dispatch_mach_send_and_wait_for_reply <- _xpc_connection_send_message_with_reply_sync
+  <- -[NSXPCConnection _sendSelector:withProxy:arg1:]
+  <- ___LAUNCH_SERVICES_WAS_ASKED_TO_PERFORM_BLOCKING_IO_ON_THE_MAIN_QUEUE__
+  <- __LSCopyServerStore <- _LSContextInitCommon <- LSApplicationRecord
+  _initWithNode: <- _LSDBEnumeratorGetNextObject
+  <- -[FBApplicationDataStoreRepositoryManager
+  clearExpiredUninstalledApplicationsFromStoreIfNecessary]` - a **synchronous
+  XPC to lsd** that never replies (this is the `Waiting...` icon machinery).
+- lsd's worker thread (same run): `_mach_msg2_trap` backtrace that unslides
+  to `libMobileGestaltExtensions func_1a2e99cac+196`,
+  `libMobileGestalt func_19c556440+792` and `_MGCopyAnswerWithError+24` -
+  lsd is blocked inside a **MobileGestalt answer**.
+- MobileGestaltHelper itself: frozen for the whole run at
+  `CFRunLoopRun -> ___CFRunLoopServiceMachPort -> mach_msg` - **idle**, never
+  receiving or never answering.
+
+So the chain is SpringBoard -> lsd -> MGCopyAnswer -> helper -> (nothing).
+Slide arithmetic is now verified: the probe's own dyld dump gives
+libsystem_kernel hdr 0x1f61dc000 with slide 0x33bcc000, and
+MGCopyAnswer=0x1d0122994 - 0x33bcc000 = 0x19C556994, exactly the known
+`func_19c556440+0x554`.  Note the sampler's printed `slide` matches the
+shared-cache slide in a real run (0x33bcc000) but a wrong guess of it made
+two earlier symbolicate runs resolve to unrelated frameworks - always take
+the slide from a dyld dump.
+
+**Helper job config is intact in the compiled cache** (checked in the same
+run): `Label com.apple.mobilegestalt.xpc  MachServices {'com.apple.mobilegestalt.xpc': True}
+Program /usr/libexec/MobileGestaltHelper  UserName mobile  RunAtLoad None` -
+so our own cache edits did not damage it.  The one unusual thing about the
+job is that it is a **cross-user demand start** (mobile inside a system
+domain), which is exactly where launchd's port check-in/transfer can fail
+silently here.
+
+**Experiment in run 46105347094:** mkiosroot rewrites that job's
+`UserName` to `root`.  If clients unblock, the user-context switch is the
+bug; if nothing changes, the port/check-in path itself is broken and the
+kernel-side mach trace is the next step.
+
+**Probe limitations found (do not repeat):** fork children hang before their
+first line (run 46021587214 - a forked child inherits broken Mach port
+state) and posix_spawn children never reach main() (run 46100392739 - this
+port's third-party posix_spawn path does not work).  Only in-parent,
+sequential MGCopyAnswer calls produce data; keys are now ordered
+most-informative-first (Artwork*/DeviceColor/UserAssignedDeviceName/
+ModelNumber before ProductType/HardwareModel/MainScreenScale and the
+helper-backed SerialNumber/UniqueDeviceID).
+
 ### >>> UPDATE 2026-11-27 - the stall is the MobileGestaltHelper XPC round trip; probe now maps every key <<<
 
 **mgprobe evidence (runs inside iOS as mobile, one iteration/minute):**
