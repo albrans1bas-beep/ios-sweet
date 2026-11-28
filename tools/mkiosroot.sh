@@ -408,6 +408,34 @@ def probe(o):
 probe(d)
 if found != 1:
 	sys.exit('expected exactly one probe job (%s), found %d' % (key, found))
+
+# MobileGestaltHelper experiment: the helper sits idle in its run loop
+# (CFRunLoopRun -> mach_msg, symbolicated) while every client that asks it a
+# question blocks forever, and the cascade is SpringBoard -> lsd ->
+# MGCopyAnswer -> helper.  The job is an unusual cross-user demand start
+# (UserName: mobile inside a SYSTEM-domain daemon), which is exactly where
+# launchd's port check-in/transfer can fail silently in this port.  Run it
+# as root instead and see whether clients unblock.
+mgkey = '/System/Library/LaunchDaemons/com.apple.mobilegestalt.xpc.plist'
+mgfound = 0
+
+def mgjob(o):
+	global mgfound
+	if isinstance(o, dict):
+		for k, v in list(o.items()):
+			if k == mgkey and isinstance(v, dict):
+				print('mobilegestalt job: UserName', v.get('UserName'),
+				      '-> root; MachServices', v.get('MachServices'))
+				v['UserName'] = 'root'
+				mgfound += 1
+			else:
+				mgjob(v)
+	elif isinstance(o, list):
+		for v in o:
+			mgjob(v)
+
+mgjob(d)
+print('mobilegestalt jobs edited:', mgfound)
 with open(p, 'wb') as f:
 	plistlib.dump(d, f, fmt=plistlib.FMT_BINARY)
 print('compiled cache with mgprobe job written')

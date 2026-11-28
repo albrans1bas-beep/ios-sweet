@@ -23,7 +23,6 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
-#include <spawn.h>
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -107,52 +106,16 @@ static int want_proc(const char *name)
 	       strcasestr(name, "SpringBoard") != NULL;
 }
 
-/* Fork per call: a hung key must not eat the remaining iterations.  The
- * child does the blocking MGCopyAnswer and prints the result line itself;
- * the parent waits 20 s, logs HANG if the child is still alive, kills it
- * and moves on.
- *
- * REPLACED by posix_spawn: fork children HUNG ON EVERY KEY (run
- * 46021587214) because a forked child inherits broken Mach port state -
- * its first XPC wedges regardless of the key.  A spawned fresh process
- * tests each key the way SpringBoard's first contact does. */
+/* A hung key ends the iteration loop (the fsynced lines show where).
+ * Neither fork nor posix_spawn can be used to isolate a call: fork
+ * children hang before their first line (run 46021587214) because the
+ * child inherits broken Mach port state, and posix_spawn children from a
+ * non-launchd process never reach main() at all (run 46100392739) - our
+ * port's third-party posix_spawn path does not work yet. */
 static const char *mg_keys[];
 #define N_MG_KEYS 12
 static void try_mg(int i);
 
-static void try_mg_spawn(int i)
-{
-	const char *key = mg_keys[i % N_MG_KEYS];
-	char arg[16];
-	pid_t pid = -1;
-	int st = 0, n;
-	extern char **environ;
-
-	snprintf(arg, sizeof(arg), "%d", i);
-	line("  spawn self for %s...", key);
-	n = posix_spawn(&pid, "/usr/local/bin/mgprobe", NULL, NULL,
-	    (char *[]){ (char *)"mgprobe", arg, NULL }, environ);
-	if (n != 0) {
-		line("  ! posix_spawn: %s", strerror(n));
-		return;
-	}
-	for (n = 0; n < 20; n++) {
-		sleep(1);
-		if (waitpid(pid, &st, WNOHANG) == pid)
-			break;
-	}
-	if (n >= 20) {
-		line("  HANG: %s still blocked after 20 s - killing child %d",
-		     key, (int)pid);
-		kill(pid, SIGKILL);
-		waitpid(pid, &st, 0);
-	}
-}
-
-/* The sampler's 'slide' did not map to the shared-cache load address (two
- * symbolicate runs resolved to unrelated frameworks), so print the load
- * address of every image directly - libMobileGestalt's header address minus
- * its unslid address IS the cache slide, no guessing. */
 static void dump_images(void)
 {
 	uint32_t n = _dyld_image_count();
@@ -170,20 +133,21 @@ static void dump_images(void)
 	line("  images total %u", n);
 }
 static const char *mg_keys[] = {
-	"ProductType",
-	"HardwareModel",
-	"MainScreenScale",
-	"MainScreenWidth",
-	"MainScreenHeight",
+	/* Most informative first: the IconServices/-[ISDefaults init] keys,
+	 * then the basics, then the helper-backed ones.  The parent calls keys
+	 * sequentially and the fsynced log shows exactly where it stops
+	 * (fork AND posix_spawn children both hang before their first line,
+	 * so in-parent calls are the only working probe). */
 	"ArtworkDevice1ProductDescription",
 	"ArtworkDevice2ProductDescription",
 	"DeviceColor",
 	"UserAssignedDeviceName",
 	"ModelNumber",
-	/* Helper-backed keys LAST: if the MobileGestaltHelper XPC round trip
-	 * is what blocks SpringBoard for ~19 minutes, these iterations log
-	 * "calling..." and never return - exactly the evidence we want, and
-	 * the earlier iterations have already landed (fsync per line). */
+	"ProductType",
+	"HardwareModel",
+	"MainScreenScale",
+	"MainScreenWidth",
+	"MainScreenHeight",
 	"SerialNumber",
 	"UniqueDeviceID",
 };
@@ -288,7 +252,7 @@ int main(int argc, char **argv)
 		line("$ interesting processes:");
 		list_procs();
 		line("$ MGCopyAnswer test %d:", i);
-		try_mg_spawn(i);
+		try_mg(i);
 		line("$ client gestalt plist:");
 		dump_file("/private/var/preferences/com.apple.MobileGestalt.plist");
 		line("$ Bundle dirs:");
